@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import EntradaVoz from './components/EntradaVoz';
 import DesgloseNutrientes from './components/DesgloseNutrientes';
 import Consejos from './components/Consejos';

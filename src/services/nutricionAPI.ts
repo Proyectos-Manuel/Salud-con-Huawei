@@ -24,19 +24,19 @@ const USDA_API_KEY = 'vrW4XieDUbZa5I8UGn0Yvi9hvWARhDx4BrZX4bAx';
 const BASE_URL = 'https://api.nal.usda.gov/fdc/v1';
 
 // 📋 IDs oficiales de nutrientes en USDA
-const NUTRIENT_IDS = {
-  ENERGIA: 1008,
-  PROTEINA: 1003,
-  GRASAS: 1004,
-  CARBOHIDRATOS: 1005,
-  FIBRA: 1079,
-  HIERRO: 1089,
-  CALCIO: 1087,
-  POTASIO: 1092,
-  MAGNESIO: 1090,
-  VITAMINA_C: 1162,
-  VITAMINA_A: 1104,
-};
+//const NUTRIENT_IDS = {
+//  ENERGIA: 1008,
+//  PROTEINA: 1003,
+//  GRASAS: 1004,
+//  CARBOHIDRATOS: 1005,
+//  FIBRA: 1079,
+//  HIERRO: 1089,
+//  CALCIO: 1087,
+//  POTASIO: 1092,
+//  MAGNESIO: 1090,
+//  VITAMINA_C: 1162,
+//  VITAMINA_A: 1104,
+//};
 
 // Función principal
 export async function analizarComida(texto: string): Promise<{
