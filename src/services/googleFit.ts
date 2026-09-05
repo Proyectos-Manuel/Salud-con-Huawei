@@ -1,7 +1,7 @@
 // 🔑 Tus claves de Google — Pégalas aquí
 const CLIENT_ID = '763849623295-lo9cgmfuomu3thbihvo9dsb8i2rj8tqi.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
-const REDIRECT_URI = 'http://localhost:5173/callback';
+const REDIRECT_URI = import.meta.env.PUBLIC_REDIRECT_URI || 'http://localhost:5173';
 
 // Permisos que pediremos: pasos, calorías, sueño, frecuencia cardíaca
 const SCOPES = [
