@@ -3,7 +3,7 @@ import EntradaVoz from './components/EntradaVoz';
 import DesgloseNutrientes from './components/DesgloseNutrientes';
 import Consejos from './components/Consejos';
 import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, generarConsejos } from './services/nutricionAPI';
-import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetasUsuario, Nutrientes } from './types';
+import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetasUsuario } from './types';
 
 type TipoComida = 'desayuno' | 'comida' | 'cena' | 'merienda';
 
@@ -11,7 +11,7 @@ const App: React.FC = () => {
   const [textoDictado, setTextoDictado] = useState('');
   const [cargando, setCargando] = useState(false);
   const [listaAlimentos, setListaAlimentos] = useState<AlimentoDesglosado[]>([]);
-  const [comidaGuardada, setComidaGuardada] = useState<Comida | null>(null);
+  const [, setComidaGuardada] = useState<Comida | null>(null);
   const [tipoComida, setTipoComida] = useState<TipoComida>('comida');
   const [historial, setHistorial] = useState<Comida[]>([]);
   const [mensaje, setMensaje] = useState('');
