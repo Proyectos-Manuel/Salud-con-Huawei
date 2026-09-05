@@ -1,7 +1,7 @@
 // 🔑 Tus claves de Google — Pégalas aquí
-const CLIENT_ID = '763849623295-lo9cgmfuomu3thbihvo9dsb8i2rj8tqi.apps.googleusercontent.com';
+const CLIENT_ID = "763849623295-lo9cgmfuomu3thbihvo9dsb8i2rj8tqi.apps.googleusercontent.com";
 const CLIENT_SECRET = import.meta.env.PUBLIC_GOOGLE_CLIENT_SECRET || "";
-const REDIRECT_URI = import.meta.env.PUBLIC_REDIRECT_URI || 'https://salud-con-huawei.vercel.app';
+const REDIRECT_URI = import.meta.env.PUBLIC_REDIRECT_URI || "https://salud-con-huawei.vercel.app";
 
 // Permisos que pediremos: pasos, calorías, sueño, frecuencia cardíaca
 const SCOPES = [

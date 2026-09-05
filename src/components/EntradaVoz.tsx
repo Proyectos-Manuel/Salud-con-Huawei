@@ -1,84 +1,107 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 
-interface EntradaVozProps {
-  onTextoObtenido: (texto: string) => void;
+interface Props {
+  alRecibirTexto: (texto: string) => void;
 }
 
-const EntradaVoz: React.FC<EntradaVozProps> = ({ onTextoObtenido }) => {
+const EntradaVoz: React.FC<Props> = ({ alRecibirTexto }) => {
   const [escuchando, setEscuchando] = useState(false);
   const [texto, setTexto] = useState('');
+  const reconocimientoRef = useRef<any>(null);
 
-  const iniciarReconocimiento = () => {
+  const iniciar = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.");
+      alert('Usa Chrome o Edge para el micrófono');
       return;
     }
 
-    const reconocimiento = new SpeechRecognition();
-    reconocimiento.lang = 'es-MX'; // Español de México 🇲🇽
-    reconocimiento.continuous = false;
-    reconocimiento.interimResults = true;
+    const rec = new SpeechRecognition();
+    rec.lang = 'es-MX';
+    rec.interimResults = true;
+    rec.continuous = true;
 
-    reconocimiento.onstart = () => setEscuchando(true);
-    reconocimiento.onend = () => setEscuchando(false);
-
-    reconocimiento.onresult = (event: any) => {
-      const resultado = Array.from(event.results)
-        .map((r: any) => r[0].transcript)
-        .join('');
-      setTexto(resultado);
+    rec.onstart = () => {
+      setEscuchando(true);
+      console.log('🎤 Escuchando...');
     };
 
-    reconocimiento.start();
+    rec.onresult = (e: any) => {
+      let t = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        t += e.results[i][0].transcript;
+      }
+      setTexto(t); // ✅ Se ve en pantalla mientras hablas
+    };
+
+    rec.onerror = (err: any) => {
+      console.error('❌ Voz:', err);
+      setEscuchando(false);
+    };
+
+    rec.onend = () => {
+      setEscuchando(false);
+    };
+
+    reconocimientoRef.current = rec;
+    rec.start();
   };
 
+  const detener = () => {
+    if (reconocimientoRef.current) reconocimientoRef.current.stop();
+  };
+
+  // ✅ Envía manualmente cuando des clic
   const enviarTexto = () => {
     if (texto.trim()) {
-      onTextoObtenido(texto);
+      console.log('📤 Enviando:', texto.trim());
+      alRecibirTexto(texto.trim());
     }
   };
 
   return (
-    <div style={{ textAlign: 'center', padding: '20px', background: '#f0f4ff', borderRadius: '12px', marginBottom: '20px' }}>
-      <h2>🍽️ ¿Qué comiste hoy?</h2>
-      
+    <div style={{ textAlign: 'center', margin: '25px 0' }}>
+      {/* Botón micrófono */}
       <button
-        onClick={iniciarReconocimiento}
+        onMouseDown={iniciar}
+        onMouseUp={detener}
+        onMouseLeave={() => escuchando && detener()}
+        onTouchStart={(e) => { e.preventDefault(); iniciar(); }}
+        onTouchEnd={(e) => { e.preventDefault(); detener(); }}
         style={{
-          padding: '15px 30px',
-          fontSize: '18px',
-          borderRadius: '50px',
-          border: 'none',
-          background: escuchando ? '#ff4d4d' : '#2d7dff',
-          color: 'white',
-          cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          animation: escuchando ? 'pulse 1s infinite' : 'none',
+          width: '120px', height: '120px', borderRadius: '50%', border: 'none', fontSize: '45px',
+          cursor: 'pointer', transition: 'all 0.2s',
+          background: escuchando ? '#ef4444' : '#10b981', color: 'white',
         }}
       >
-        {escuchando ? '🔴 Escuchando... ¡Habla!' : '🎤 Presiona y habla'}
+        🎤
       </button>
 
+      <p style={{ margin: '10px 0', fontSize: '15px' }}>
+        {escuchando ? '🔴 Escuchando...' : 'Mantén presionado y habla'}
+      </p>
+
+      {/* ✅ Aquí se ve lo que dices */}
       {texto && (
-        <div style={{ marginTop: '20px' }}>
-          <p style={{ fontSize: '16px', fontStyle: 'italic' }}>"{texto}"</p>
+        <div style={{
+          margin: '15px auto', padding: '12px', maxWidth: '500px',
+          background: '#f0fdf4', borderRadius: '8px', fontSize: '16px',
+        }}>
+          🗣️ Dijiste: <strong>{texto}</strong>
+          
+          {/* ✅ BOTÓN PARA ENVIAR MANUALMENTE */}
           <button
             onClick={enviarTexto}
-            style={{ padding: '10px 25px', fontSize: '16px', borderRadius: '8px', border: 'none', background: '#28a745', color: 'white', cursor: 'pointer', marginTop: '10px' }}
+            style={{
+              marginLeft: '10px', padding: '6px 15px', fontSize: '15px',
+              background: '#10b981', color: 'white', border: 'none',
+              borderRadius: '6px', cursor: 'pointer',
+            }}
           >
-            ✅ Analizar esta comida
+            ✅ Usar este texto
           </button>
         </div>
       )}
-
-      <style>{`
-        @keyframes pulse {
-          0% { transform: scale(1); }
-          50% { transform: scale(1.05); }
-          100% { transform: scale(1); }
-        }
-      `}</style>
     </div>
   );
 };

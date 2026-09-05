@@ -1,17 +1,23 @@
 import React from 'react';
-// Si la línea es así: import type { ... } ...
-// Déjala igual, no tiene tipos que importar
-interface ConsejosProps {
-  lista: string[];
+
+interface Props {
+  consejos: string[] | undefined | null;
 }
 
-const Consejos: React.FC<ConsejosProps> = ({ lista }) => {
+const Consejos: React.FC<Props> = ({ consejos }) => {
+  // ✅ Si no hay consejos o está vacío → no muestra nada
+  if (!consejos || !Array.isArray(consejos) || consejos.length === 0) {
+    return null;
+  }
+
   return (
-    <div style={{ background: '#fff3e0', padding: '20px', borderRadius: '12px' }}>
-      <h2>💡 Recomendaciones</h2>
-      <ul style={{ fontSize: '16px', lineHeight: '1.8' }}>
-        {lista.map((consejo, i) => (
-          <li key={i}>{consejo}</li>
+    <div style={{ marginTop: '15px' }}>
+      <h4>💡 Recomendaciones:</h4>
+      <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+        {consejos.map((consejo, idx) => (
+          <li key={idx} style={{ margin: '4px 0' }}>
+            {consejo}
+          </li>
         ))}
       </ul>
     </div>

@@ -1,339 +1,558 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import EntradaVoz from './components/EntradaVoz';
 import DesgloseNutrientes from './components/DesgloseNutrientes';
 import Consejos from './components/Consejos';
-import { analizarComida, generarConsejos } from './services/nutricionAPI';
-import { obtenerEnlaceGoogle, leerDatosGoogleFit, obtenerTokenDesdeCodigo } from './services/googleFit';
+import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, generarConsejos } from './services/nutricionAPI';
+import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetasUsuario, Nutrientes } from './types';
 
-type DatosSalud = {
-  pasos: number;
-  caloriasQuemadas: number;
-  horasSueno: number;
-  frecuenciaCardiaca: number;
-  nivelEstres: number;
-};
+type TipoComida = 'desayuno' | 'comida' | 'cena' | 'merienda';
 
-type ComidaGuardada = {
-  id: string;
-  tipo: 'desayuno' | 'comida' | 'cena' | 'merienda';
-  fecha: string;
-  hora: string;
-  texto: string;
-  nutrientes: {
-    proteina: number;
-    grasas: number;
-    carbohidratos: number;
-    fibra: number;
-    calorias: number;
-    hierro: number;
-    calcio: number;
-    potasio: number;
-    magnesio: number;
-    vitaminaC: number;
-    vitaminaA: number;
-  };
-};
-
-type RegistroDiarioSalud = {
-  fecha: string;
-  pasos: number;
-  caloriasQuemadas: number;
-  horasSueno: number;
-  frecuenciaCardiaca: number;
-};
-
-function generarConsejosSalud(salud: DatosSalud): string[] {
-  const consejos: string[] = [];
-  if (salud.pasos > 8000) consejos.push("🏃 Hoy te moviste mucho. Agrega proteínas extra y más agua.");
-  else if (salud.pasos < 3000) consejos.push("🚶 Poca actividad hoy. Tus necesidades de calorías son menores.");
-  else consejos.push("✅ Buen nivel de actividad hoy.");
-  if (salud.horasSueno < 6) consejos.push("😴 Dormiste poco. Aumenta magnesio y vitamina B6.");
-  else consejos.push("✅ Buen descanso. Tu cuerpo aprovecha bien los nutrientes.");
-  if (salud.nivelEstres > 70) consejos.push("🧘 Estrés alto hoy. Agrega vitamina C y magnesio.");
-  if (salud.caloriasQuemadas > 2000) consejos.push("🔥 Gasto alto hoy. Considera carbohidratos de calidad.");
-  return consejos;
-}
-
-function App() {
+const App: React.FC = () => {
+  const [textoDictado, setTextoDictado] = useState('');
   const [cargando, setCargando] = useState(false);
-  const [nutrientes, setNutrientes] = useState<any>(null);
-  const [consejosNutricion, setConsejosNutricion] = useState<string[]>([]);
-  const [textoComida, setTextoComida] = useState('');
-  const [datosSalud, setDatosSalud] = useState<DatosSalud>({
-    pasos: 0, caloriasQuemadas: 0, horasSueno: 7, frecuenciaCardiaca: 70, nivelEstres: 50,
+  const [listaAlimentos, setListaAlimentos] = useState<AlimentoDesglosado[]>([]);
+  const [comidaGuardada, setComidaGuardada] = useState<Comida | null>(null);
+  const [tipoComida, setTipoComida] = useState<TipoComida>('comida');
+  const [historial, setHistorial] = useState<Comida[]>([]);
+  const [mensaje, setMensaje] = useState('');
+
+  // 📅 Calendario y fecha seleccionada
+  const hoy = new Date().toISOString().split('T')[0];
+  const [fechaSeleccionada, setFechaSeleccionada] = useState(hoy);
+  const [mesCalendario, setMesCalendario] = useState(new Date());
+
+  // 📋 Datos de salud del día
+  const [datosSalud, setDatosSalud] = useState<DatosSaludDiarios>({
+    fecha: hoy,
+    pasos: 0,
+    caloriasQuemadas: 0,
+    horasSueno: 0,
+    pesoKg: 0,
+    masaMagraKg: 0,
   });
-  const [tokenGoogle, setTokenGoogle] = useState<string | null>(null);
-  const [cargandoFit, setCargandoFit] = useState(false);
 
-  // 📋 HISTORIAL DE COMIDAS
-  const [comidasGuardadas, setComidasGuardadas] = useState<ComidaGuardada[]>([]);
-  const [tipoComidaActiva, setTipoComidaActiva] = useState<'desayuno' | 'comida' | 'cena' | 'merienda'>('desayuno');
-  const [verHistorial, setVerHistorial] = useState(false);
+  // 🎯 Metas del usuario
+  const [metas, setMetas] = useState<MetasUsuario>({
+    caloriasDiarias: 2000,
+    proteinaGramos: 80,
+    caloriasQuemadas: 500,
+    pasos: 8000,
+  });
 
-  // 📊 HISTORIAL DE DATOS DEL RELOJ POR DÍA
-  const [historialSalud, setHistorialSalud] = useState<RegistroDiarioSalud[]>([]);
+  // 📊 Pestañas
+  const [pestana, setPestana] = useState<'comidas' | 'salud' | 'calendario' | 'metas' | 'resumen'>('comidas');
 
-  // 📅 Obtener fecha de hoy
-  const obtenerFechaHoy = () => {
-    const hoy = new Date();
-    return `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}-${String(hoy.getDate()).padStart(2,'0')}`;
-  };
-
-  // 💾 Cargar TODO el historial al abrir la app
+  // ✅ Cargar datos guardados
   useEffect(() => {
-    const comidas = localStorage.getItem('historialComidas');
-    const salud = localStorage.getItem('historialSalud');
-    if (comidas) setComidasGuardadas(JSON.parse(comidas));
-    if (salud) setHistorialSalud(JSON.parse(salud));
-  }, []);
-
-  // 💾 Guardar comidas automáticamente
-  useEffect(() => {
-    localStorage.setItem('historialComidas', JSON.stringify(comidasGuardadas));
-  }, [comidasGuardadas]);
-
-  // 💾 Guardar datos del reloj POR DÍA automáticamente
-  useEffect(() => {
-    if (datosSalud.pasos > 0 || datosSalud.caloriasQuemadas > 0) {
-      const fechaHoy = obtenerFechaHoy();
-      setHistorialSalud(prev => {
-        const sinHoy = prev.filter(r => r.fecha !== fechaHoy);
-        const registroActual: RegistroDiarioSalud = {
-          fecha: fechaHoy,
-          pasos: datosSalud.pasos,
-          caloriasQuemadas: datosSalud.caloriasQuemadas,
-          horasSueno: datosSalud.horasSueno,
-          frecuenciaCardiaca: datosSalud.frecuenciaCardiaca,
-        };
-        const nuevo = [...sinHoy, registroActual];
-        localStorage.setItem('historialSalud', JSON.stringify(nuevo));
-        return nuevo;
-      });
-    }
-  }, [datosSalud.pasos, datosSalud.caloriasQuemadas, datosSalud.horasSueno, datosSalud.frecuenciaCardiaca]);
-
-  // 🔄 Conexión con Google Fit
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const codigo = url.searchParams.get('code');
-    if (codigo) {
-      setCargandoFit(true);
-      url.searchParams.delete('code');
-      window.history.replaceState({}, '', url.toString());
-      obtenerTokenDesdeCodigo(codigo).then(async token => {
-        if (token) {
-          setTokenGoogle(token);
-          const datos = await leerDatosGoogleFit(token);
-          if (datos) {
-            setDatosSalud({
-              pasos: datos.pasos, caloriasQuemadas: datos.caloriasQuemadas,
-              horasSueno: datos.horasSueno, frecuenciaCardiaca: datos.frecuenciaCardiaca, nivelEstres: 50,
-            });
-          }
-        }
-        setCargandoFit(false);
-      });
-    }
-  }, []);
-
-  // ➕ Guardar comida
-  const guardarComidaActual = () => {
-    if (!nutrientes) return;
-    const nuevaComida: ComidaGuardada = {
-      id: Date.now().toString(),
-      tipo: tipoComidaActiva,
-      fecha: obtenerFechaHoy(),
-      hora: new Date().toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-      texto: textoComida,
-      nutrientes: { ...nutrientes }
-    };
-    setComidasGuardadas(prev => [...prev, nuevaComida]);
-    alert(`✅ ${tipoComidaActiva.toUpperCase()} guardada!`);
-  };
-
-  // 📊 Resumen del día
-  const comidasDeHoy = comidasGuardadas.filter(c => c.fecha === obtenerFechaHoy());
-  const resumenHoy = comidasDeHoy.reduce((total, c) => ({
-    proteina: total.proteina + c.nutrientes.proteina,
-    grasas: total.grasas + c.nutrientes.grasas,
-    carbohidratos: total.carbohidratos + c.nutrientes.carbohidratos,
-    fibra: total.fibra + c.nutrientes.fibra,
-    calorias: total.calorias + c.nutrientes.calorias,
-    hierro: total.hierro + c.nutrientes.hierro,
-    calcio: total.calcio + c.nutrientes.calcio,
-    potasio: total.potasio + c.nutrientes.potasio,
-    magnesio: total.magnesio + c.nutrientes.magnesio,
-    vitaminaC: total.vitaminaC + c.nutrientes.vitaminaC,
-    vitaminaA: total.vitaminaA + c.nutrientes.vitaminaA,
-  }), { proteina:0, grasas:0, carbohidratos:0, fibra:0, calorias:0, hierro:0, calcio:0, potasio:0, magnesio:0, vitaminaC:0, vitaminaA:0 });
-
-  // 📈 Promedios de la última semana
-  const ultimaSemana = historialSalud.slice(-7);
-  const promedioPasos = ultimaSemana.length ? Math.round(ultimaSemana.reduce((s, r) => s + r.pasos, 0) / ultimaSemana.length) : 0;
-  const promedioCalorias = ultimaSemana.length ? Math.round(ultimaSemana.reduce((s, r) => s + r.caloriasQuemadas, 0) / ultimaSemana.length) : 0;
-  const promedioSueno = ultimaSemana.length ? (ultimaSemana.reduce((s, r) => s + r.horasSueno, 0) / ultimaSemana.length).toFixed(1) : 0;
-
-  const alRecibirTexto = async (texto: string) => {
-    setTextoComida(texto);
-    setCargando(true);
-    setNutrientes(null);
-    setConsejosNutricion([]);
     try {
-      const resultado = await analizarComida(texto);
-      setNutrientes(resultado.total);
-      setConsejosNutricion(generarConsejos(resultado.total));
-    } catch (err) {
-      alert("No pude analizar la comida.");
-      console.error(err);
-    } finally {
-      setCargando(false);
+      const guardado = localStorage.getItem('historialComidas');
+      if (guardado) setHistorial(JSON.parse(guardado));
+    } catch (e) { console.log('Sin historial'); }
+
+    try {
+      const saludGuardada = localStorage.getItem('datosSalud');
+      if (saludGuardada) setDatosSalud(JSON.parse(saludGuardada));
+    } catch (e) {}
+
+    try {
+      const metasGuardadas = localStorage.getItem('metasUsuario');
+      if (metasGuardadas) setMetas(JSON.parse(metasGuardadas));
+    } catch (e) {}
+  }, []);
+
+  // ✅ Cambiar fecha → cargar datos de ese día
+  useEffect(() => {
+    const guardado = localStorage.getItem('datosSalud');
+    if (guardado) {
+      const todos = JSON.parse(guardado);
+      if (todos[fechaSeleccionada]) {
+        setDatosSalud({ ...todos[fechaSeleccionada], fecha: fechaSeleccionada });
+      } else {
+        setDatosSalud({ fecha: fechaSeleccionada, pasos: 0, caloriasQuemadas: 0, horasSueno: 0, pesoKg: 0, masaMagraKg: 0 });
+      }
     }
+  }, [fechaSeleccionada]);
+
+  const alRecibirTexto = (texto: string) => {
+    setMensaje('');
+    setComidaGuardada(null);
+    setListaAlimentos([]);
+    setTextoDictado(texto);
   };
 
-  const consejosSalud = generarConsejosSalud(datosSalud);
+  const analizarComida = async () => {
+    setMensaje('');
+    if (!textoDictado || textoDictado.trim().length === 0) {
+      setMensaje('⚠️ Escribe o di qué comiste');
+      return;
+    }
+    setCargando(true);
+
+    try {
+      const partes = desglosarAlimentos(textoDictado);
+      if (!partes || partes.length === 0) {
+        setMensaje('⚠️ No entendí. Intenta: "200g de pollo y 50g de quinoa"');
+        setCargando(false);
+        return;
+      }
+
+      setMensaje(`🔍 ${partes.length} alimentos... buscando datos...`);
+      const lista: AlimentoDesglosado[] = [];
+
+      for (const parte of partes) {
+        const nutrientes = await obtenerNutrientes(parte.nombre, parte.gramos);
+        lista.push({
+          id: crypto.randomUUID(),
+          textoOriginal: parte.texto,
+          nombre: parte.nombre,
+          gramos: parte.gramos,
+          nutrientes,
+          confirmado: true,
+        });
+      }
+
+      if (lista.length === 0) {
+        setMensaje('❌ No hay datos. Revisa tu clave API en .env');
+      } else {
+        setMensaje(`✅ ¡Listo! ${lista.length} alimentos analizados`);
+        setListaAlimentos(lista);
+      }
+    } catch (err) {
+      console.error(err);
+      setMensaje('❌ Error al analizar. Revisa la clave API.');
+    }
+    setCargando(false);
+  };
+
+  const cambiarGramos = async (id: string, nuevosGramos: number) => {
+    if (nuevosGramos < 10) return;
+    const alimento = listaAlimentos.find(a => a.id === id);
+    if (!alimento) return;
+    const nutrientes = await obtenerNutrientes(alimento.nombre, nuevosGramos);
+    setListaAlimentos(prev => prev.map(a => a.id === id ? { ...a, gramos: nuevosGramos, nutrientes } : a));
+  };
+
+  const quitarAlimento = (id: string) => {
+    setListaAlimentos(prev => prev.filter(a => a.id !== id));
+  };
+
+  // 💾 Guardar comida con fecha
+  const guardarComida = () => {
+    if (listaAlimentos.length === 0) {
+      setMensaje('⚠️ No hay alimentos para guardar');
+      return;
+    }
+    const total = sumarNutrientes(listaAlimentos.map(a => a.nutrientes));
+    const comida: Comida = {
+      id: crypto.randomUUID(),
+      tipo: tipoComida,
+      alimentos: listaAlimentos,
+      fecha: new Date(fechaSeleccionada),
+      total,
+    };
+    const nuevoHistorial = [comida, ...historial];
+    localStorage.setItem('historialComidas', JSON.stringify(nuevoHistorial));
+    setHistorial(nuevoHistorial);
+    setComidaGuardada(comida);
+    setListaAlimentos([]);
+    setTextoDictado('');
+  };
+
+  // 💾 Guardar datos de salud
+  const guardarDatosSalud = () => {
+    const todos = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+    todos[fechaSeleccionada] = datosSalud;
+    localStorage.setItem('datosSalud', JSON.stringify(todos));
+    setMensaje('✅ Datos de salud guardados');
+  };
+
+  // 💾 Guardar metas
+  const guardarMetas = () => {
+    localStorage.setItem('metasUsuario', JSON.stringify(metas));
+    setMensaje('✅ Metas guardadas');
+  };
+
+  // 📤 Exportar todo
+  const exportarTodo = () => {
+    let csv = 'Tipo,Fecha,Alimento,Gramos,Calorías,Proteína,Carbohidratos,Grasas,Fibra,Hierro,Calcio,Potasio,Magnesio,Vitamina C,Vitamina A\n';
+    historial.forEach(c => {
+      const fecha = new Date(c.fecha).toLocaleDateString();
+      c.alimentos.forEach(a => {
+        csv += `${c.tipo},${fecha},"${a.nombre}",${a.gramos},${a.nutrientes.calorias},${a.nutrientes.proteina},${a.nutrientes.carbohidratos},${a.nutrientes.grasas},${a.nutrientes.fibra},${a.nutrientes.hierro},${a.nutrientes.calcio},${a.nutrientes.potasio},${a.nutrientes.magnesio},${a.nutrientes.vitaminaC},${a.nutrientes.vitaminaA}\n`;
+      });
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Salud_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setMensaje('✅ Archivo descargado');
+  };
+
+  // 📅 Generar días del mes para calendario
+  const diasDelMes = () => {
+    const año = mesCalendario.getFullYear();
+    const mes = mesCalendario.getMonth();
+    const primerDia = new Date(año, mes, 1).getDay();
+    const ultimoDia = new Date(año, mes + 1, 0).getDate();
+    const dias: (number | null)[] = [];
+    for (let i = 0; i < primerDia; i++) dias.push(null);
+    for (let i = 1; i <= ultimoDia; i++) dias.push(i);
+    return dias;
+  };
+
+  // 📊 Comidas de la fecha seleccionada
+  const comidasDelDia = historial.filter(c => {
+    const fechaComida = new Date(c.fecha).toISOString().split('T')[0];
+    return fechaComida === fechaSeleccionada;
+  });
+
+  const totalDelDia = sumarNutrientes(comidasDelDia.map(c => c.total));
+
+  // 🎯 Recomendación según balance
+  const recomendacionSalud = () => {
+    const saldoCalorias = totalDelDia.calorias - datosSalud.caloriasQuemadas;
+    if (saldoCalorias < -300) return { texto: '🔽 Estás quemando más calorías de las que consumes → ideal para bajar de peso', color: '#dbeafe' };
+    if (saldoCalorias > 300) return { texto: '🔼 Consumes más de lo que quemas → cuida las porciones para mantener peso', color: '#fef3c7' };
+    return { texto: '✅ Balance excelente → mantienes tu peso ideal', color: '#d1fae5' };
+  };
+
+  const consejos = generarConsejos(totalDelDia);
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif' }}>
-      <h1 style={{ textAlign: 'center', color: '#2d3748' }}>💚 Salud con Huawei — Alimentación</h1>
-      <p style={{ textAlign: 'center', color: '#666', marginBottom: '20px' }}>Solo di qué comiste. Yo calculo los nutrientes por ti.</p>
+    <div style={{ maxWidth: '750px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif' }}>
+      <h1>💚 Salud con Huawei</h1>
 
-      {!tokenGoogle && (
-        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-          <a href={obtenerEnlaceGoogle()} style={{ display: 'inline-block', background: '#4285F4', color: 'white', padding: '10px 20px', borderRadius: '8px', textDecoration: 'none', fontWeight: 'bold' }}>🔗 Conectar con Google Fit</a>
-          <p style={{ fontSize: '13px', color: '#666', marginTop: '5px' }}>Lee automáticamente tus pasos, sueño y actividad del reloj</p>
-        </div>
-      )}
-
-      {cargandoFit && <p style={{ textAlign: 'center' }}>🔄 Conectando con Google Fit...</p>}
-
-      <div style={{ background: '#e6fffa', padding: '15px', borderRadius: '12px', marginBottom: '20px' }}>
-        <h2>⌚ Tus datos del día</h2>
-        <p style={{ fontSize: '13px', color: '#047857', marginBottom: '10px' }}>✅ Se guardan automáticamente día por día</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
-          <div><label>👣 Pasos</label><input type="number" value={datosSalud.pasos || ''} onChange={e => setDatosSalud({...datosSalud, pasos: Number(e.target.value)})} style={{ width: '100%', padding: '6px', borderRadius: '6px', border: '1px solid #ccc' }} /></div>
-          <div><label>🔥 Calorías quemadas</label><input type="number" value={datosSalud.caloriasQuemadas || ''} onChange={e => setDatosSalud({...datosSalud, caloriasQuemadas: Number(e.target.value)})} style={{ width: '100%', padding: '6px', borderRadius: '6px', border: '1px solid #ccc' }} /></div>
-          <div><label>😴 Horas de sueño</label><input type="number" value={datosSalud.horasSueno || ''} onChange={e => setDatosSalud({...datosSalud, horasSueno: Number(e.target.value)})} style={{ width: '100%', padding: '6px', borderRadius: '6px', border: '1px solid #ccc' }} /></div>
-          <div><label>💓 Pulso promedio</label><input type="number" value={datosSalud.frecuenciaCardiaca || ''} onChange={e => setDatosSalud({...datosSalud, frecuenciaCardiaca: Number(e.target.value)})} style={{ width: '100%', padding: '6px', borderRadius: '6px', border: '1px solid #ccc' }} /></div>
-          <div><label>🧘 Estrés %</label><input type="number" value={datosSalud.nivelEstres || ''} onChange={e => setDatosSalud({...datosSalud, nivelEstres: Number(e.target.value)})} style={{ width: '100%', padding: '6px', borderRadius: '6px', border: '1px solid #ccc' }} /></div>
-        </div>
-        <h3 style={{ marginTop: '15px' }}>💡 Recomendaciones personalizadas</h3>
-        <ul style={{ margin: 0, paddingLeft: '20px' }}>{consejosSalud.map((c, i) => <li key={i}>{c}</li>)}</ul>
+      {/* 📅 Selector de fecha */}
+      <div style={{ margin: '15px 0', textAlign: 'center' }}>
+        <label style={{ fontWeight: 'bold', marginRight: '10px' }}>📅 Fecha:</label>
+        <input
+          type="date"
+          value={fechaSeleccionada}
+          onChange={(e) => setFechaSeleccionada(e.target.value)}
+          style={{ padding: '6px 10px', fontSize: '16px', borderRadius: '6px', border: '1px solid #ccc' }}
+        />
       </div>
 
-      {/* 📈 PROMEDIOS DE LA SEMANA */}
-      {historialSalud.length > 0 && (
-        <div style={{ background: '#fef3c7', padding: '15px', borderRadius: '12px', marginBottom: '20px' }}>
-          <h2>📈 Promedios de la última semana</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
-            <div>👣 Pasos promedio: <strong>{promedioPasos}</strong></div>
-            <div>🔥 Calorías promedio: <strong>{promedioCalorias}</strong></div>
-            <div>😴 Sueño promedio: <strong>{promedioSueno} hrs</strong></div>
-          </div>
-        </div>
-      )}
-
-      {/* 🍳 BOTONES: DESAYUNO / COMIDA / CENA / MERIENDA */}
-      <div style={{ marginBottom: '15px' }}>
-        <h3>🍳 ¿Qué vas a registrar?</h3>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {(['desayuno', 'comida', 'cena', 'merienda'] as const).map(tipo => (
-            <button
-              key={tipo}
-              onClick={() => setTipoComidaActiva(tipo)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '20px',
-                border: 'none',
-                background: tipoComidaActiva === tipo ? '#2f855a' : '#e2e8f0',
-                color: tipoComidaActiva === tipo ? 'white' : '#333',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                textTransform: 'capitalize'
-              }}
-            >
-              {tipo === 'desayuno' && '🌅 '}
-              {tipo === 'comida' && '☀️ '}
-              {tipo === 'cena' && '🌙 '}
-              {tipo === 'merienda' && '🍎 '}
-              {tipo}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <EntradaVoz onTextoObtenido={alRecibirTexto} />
-
-      {cargando && <p style={{ textAlign: 'center', fontSize: '18px' }}>🔎 Analizando alimentos...</p>}
-
-      {nutrientes && (
-        <>
-          <p style={{ fontStyle: 'italic', color: '#555' }}>Analizado: "{textoComida}"</p>
-          <DesgloseNutrientes nutrientes={nutrientes} />
+      {/* 🔘 Pestañas */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '15px 0' }}>
+        {[
+          { id: 'comidas', etiqueta: '🍽️ Comidas' },
+          { id: 'salud', etiqueta: '📋 Datos Salud' },
+          { id: 'calendario', etiqueta: '📅 Calendario' },
+          { id: 'metas', etiqueta: '🎯 Metas' },
+          { id: 'resumen', etiqueta: '📊 Resumen' },
+        ].map(p => (
           <button
-            onClick={guardarComidaActual}
+            key={p.id}
+            onClick={() => setPestana(p.id as any)}
             style={{
-              marginTop: '15px',
-              background: '#2f855a',
-              color: 'white',
+              padding: '8px 12px',
+              fontSize: '14px',
+              background: pestana === p.id ? '#10b981' : '#e5e7eb',
+              color: pestana === p.id ? 'white' : 'black',
               border: 'none',
-              padding: '10px 20px',
-              borderRadius: '8px',
-              fontSize: '16px',
-              fontWeight: 'bold',
+              borderRadius: '6px',
               cursor: 'pointer',
-              width: '100%'
             }}
           >
-            💾 Guardar como {tipoComidaActiva}
+            {p.etiqueta}
           </button>
-          <Consejos lista={consejosNutricion} />
-        </>
+        ))}
+      </div>
+
+      {/* ⚠️ Mensajes */}
+      {mensaje && (
+        <div style={{ margin: '10px 0', padding: '10px', background: '#fef9c3', borderRadius: '6px' }}>
+          {mensaje}
+        </div>
       )}
 
-      {/* 📊 RESUMEN DEL DÍA + HISTORIAL */}
-      {comidasDeHoy.length > 0 && (
-        <div style={{ marginTop: '25px', padding: '15px', background: '#f0fff4', borderRadius: '12px', border: '2px solid #9ae6b4' }}>
-          <h2>📊 Resumen del día ({comidasDeHoy.length} comidas)</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
-            <div>🔥 Calorías: <strong>{Math.round(resumenHoy.calorias)}</strong> kcal</div>
-            <div>🥩 Proteína: <strong>{Math.round(resumenHoy.proteina*10)/10}</strong>g</div>
-            <div>🍞 Carbohidratos: <strong>{Math.round(resumenHoy.carbohidratos*10)/10}</strong>g</div>
-            <div>🧈 Grasas: <strong>{Math.round(resumenHoy.grasas*10)/10}</strong>g</div>
-            <div>🌾 Fibra: <strong>{Math.round(resumenHoy.fibra*10)/10}</strong>g</div>
-          </div>
-          <button
-            onClick={() => setVerHistorial(!verHistorial)}
-            style={{ marginTop: '15px', padding: '8px 16px', background: '#4299e1', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
-          >
-            {verHistorial ? '📕 Ocultar historial' : '📖 Ver historial completo'}
-          </button>
+      {/* ────────────────────────────── */}
+      {/* 🍽️ PESTANA: COMIDAS */}
+      {/* ────────────────────────────── */}
+      {pestana === 'comidas' && (
+        <div>
+          <h3>¿Qué vas a registrar hoy?</h3>
+          {(['desayuno', 'comida', 'cena', 'merienda'] as TipoComida[]).map(tipo => (
+            <button
+              key={tipo}
+              onClick={() => setTipoComida(tipo)}
+              style={{
+                padding: '8px 12px',
+                margin: '4px',
+                fontSize: '15px',
+                background: tipoComida === tipo ? '#10b981' : '#e5e7eb',
+                color: tipoComida === tipo ? 'white' : 'black',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              {tipo === 'desayuno' && '🌅'}
+              {tipo === 'comida' && '☀️'}
+              {tipo === 'cena' && '🌙'}
+              {tipo === 'merienda' && '🍎'}
+              {' '}{tipo.charAt(0).toUpperCase() + tipo.slice(1)}
+            </button>
+          ))}
 
-          {verHistorial && (
-            <div style={{ marginTop: '15px', textAlign: 'left' }}>
-              <h3>📝 Registro por día</h3>
-              {historialSalud.slice().reverse().map(r => (
-                <div key={r.fecha} style={{ padding: '10px', borderBottom: '1px solid #ddd', background: '#fff' }}>
-                  <strong>📅 {r.fecha}</strong>
-                  <br />
-                  👣 {r.pasos} pasos | 🔥 {r.caloriasQuemadas} kcal quemadas | 😴 {r.horasSueno} hrs | 💓 {r.frecuenciaCardiaca} pulso
+          <EntradaVoz alRecibirTexto={alRecibirTexto} />
+
+          <div style={{ margin: '15px 0', padding: '12px', background: '#fef3c7', borderRadius: '8px' }}>
+            <p style={{ margin: '0 0 8px 0', fontWeight: 'bold' }}>✍️ O escribe:</p>
+            <input
+              type="text"
+              value={textoDictado}
+              onChange={(e) => setTextoDictado(e.target.value)}
+              placeholder="Ej: 200g de pollo y 50g de quinoa"
+              style={{ width: '100%', padding: '8px', fontSize: '16px', borderRadius: '6px', border: '1px solid #ccc' }}
+            />
+          </div>
+
+          {textoDictado && textoDictado.trim().length > 0 && (
+            <div style={{ margin: '15px 0', padding: '12px', background: '#f0fdf4', borderRadius: '8px' }}>
+              🗣️ Dijiste: <strong>{textoDictado}</strong>
+              <button
+                onClick={analizarComida}
+                disabled={cargando}
+                style={{
+                  marginTop: '10px',
+                  padding: '10px 20px',
+                  fontSize: '16px',
+                  background: cargando ? '#9ca3af' : '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: cargando ? 'not-allowed' : 'pointer',
+                  width: '100%',
+                }}
+              >
+                {cargando ? '🔍 Buscando...' : '📊 Analizar comida'}
+              </button>
+            </div>
+          )}
+
+          {listaAlimentos.length > 0 && !cargando && (
+            <div style={{ margin: '20px 0' }}>
+              <h4>🍽️ Alimentos:</h4>
+              {listaAlimentos.map((alimento, idx) => (
+                <div key={alimento.id} style={{ padding: '12px', margin: '8px 0', background: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>{idx + 1}. {alimento.gramos}g de {alimento.nombre}</strong>
+                    <div>
+                      <button onClick={() => {
+                        const nuevos = prompt('Nueva cantidad:', alimento.gramos.toString());
+                        if (nuevos && parseInt(nuevos) >= 10) cambiarGramos(alimento.id, parseInt(nuevos));
+                      }} style={{ margin: '0 4px', padding: '2px 6px', border: 'none', background: '#e5e7eb', borderRadius: '4px', cursor: 'pointer' }}>✏️</button>
+                      <button onClick={() => quitarAlimento(alimento.id)} style={{ margin: '0 4px', padding: '2px 6px', border: 'none', background: '#fee2e2', borderRadius: '4px', cursor: 'pointer', color: 'red' }}>❌</button>
+                    </div>
+                  </div>
+                  <DesgloseNutrientes nutrientes={alimento.nutrientes} />
                 </div>
               ))}
-              <h3 style={{ marginTop: '20px' }}>🍽️ Comidas guardadas</h3>
-              {comidasGuardadas.slice().reverse().map(c => (
-                <div key={c.id} style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>
-                  <strong style={{ textTransform: 'capitalize' }}>{c.tipo}</strong> — {c.fecha} {c.hora}
-                  <br />
-                  <small>{c.texto}</small>
-                  <br />
-                  <small>🔥{Math.round(c.nutrientes.calorias)}kcal | 🥩{Math.round(c.nutrientes.proteina*10)/10}g</small>
+
+              <div style={{ marginTop: '15px', padding: '12px', background: '#ecfdf5', borderRadius: '6px', border: '2px solid #10b981' }}>
+                <h4>📊 SUMA TOTAL:</h4>
+                <DesgloseNutrientes nutrientes={sumarNutrientes(listaAlimentos.map(a => a.nutrientes))} />
+              </div>
+
+              <button
+                onClick={guardarComida}
+                style={{ marginTop: '15px', padding: '10px 20px', fontSize: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%' }}
+              >
+                💾 Guardar esta comida
+              </button>
+            </div>
+          )}
+
+          {comidasDelDia.length > 0 && (
+            <div style={{ marginTop: '30px' }}>
+              <h3>📋 Comidas del día</h3>
+              {comidasDelDia.map(c => (
+                <div key={c.id} style={{ padding: '10px', margin: '6px 0', background: '#f3f4f6', borderRadius: '6px' }}>
+                  <strong>{c.tipo.charAt(0).toUpperCase() + c.tipo.slice(1)}</strong> — {c.alimentos.length} alimento(s)
+                  <br />🔥 {Math.round(c.total.calorias)} kcal | 🥩 {Math.round(c.total.proteina)}g proteína
                 </div>
               ))}
             </div>
           )}
         </div>
       )}
+
+      {/* ────────────────────────────── */}
+      {/* 📋 PESTANA: DATOS DE SALUD */}
+      {/* ────────────────────────────── */}
+      {pestana === 'salud' && (
+        <div>
+          <h2>📋 Datos del reloj y cuerpo</h2>
+          <p style={{ color: '#6b7280', fontSize: '14px' }}>Fecha: {fechaSeleccionada}</p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', margin: '15px 0' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>👣 Pasos</label>
+              <input type="number" value={datosSalud.pasos || ''} onChange={(e) => setDatosSalud({ ...datosSalud, pasos: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🔥 Calorías quemadas</label>
+              <input type="number" value={datosSalud.caloriasQuemadas || ''} onChange={(e) => setDatosSalud({ ...datosSalud, caloriasQuemadas: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>😴 Horas de sueño</label>
+              <input type="number" step="0.1" value={datosSalud.horasSueno || ''} onChange={(e) => setDatosSalud({ ...datosSalud, horasSueno: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>⚖️ Peso (kg)</label>
+              <input type="number" step="0.1" value={datosSalud.pesoKg || ''} onChange={(e) => setDatosSalud({ ...datosSalud, pesoKg: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+            <div style={{ gridColumn: 'span 2' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>💪 Masa magra (kg)</label>
+              <input type="number" step="0.1" value={datosSalud.masaMagraKg || ''} onChange={(e) => setDatosSalud({ ...datosSalud, masaMagraKg: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+          </div>
+
+          <button onClick={guardarDatosSalud} style={{ padding: '10px 20px', fontSize: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%' }}>
+            💾 Guardar datos de salud
+          </button>
+
+          {/* 🎯 Recomendación inteligente */}
+          {comidasDelDia.length > 0 && datosSalud.caloriasQuemadas > 0 && (
+            <div style={{ marginTop: '25px', padding: '15px', borderRadius: '8px', background: recomendacionSalud().color }}>
+              <h3>🎯 Balance del día</h3>
+              <p><strong>Calorías consumidas:</strong> {Math.round(totalDelDia.calorias)} kcal</p>
+              <p><strong>Calorías quemadas:</strong> {datosSalud.caloriasQuemadas} kcal</p>
+              <p><strong>Saldo:</strong> {Math.round(totalDelDia.calorias - datosSalud.caloriasQuemadas)} kcal</p>
+              <p style={{ marginTop: '10px', fontWeight: 'bold' }}>{recomendacionSalud().texto}</p>
+              {consejos && consejos.length > 0 && <Consejos consejos={consejos} />}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ────────────────────────────── */}
+      {/* 📅 PESTANA: CALENDARIO */}
+      {/* ────────────────────────────── */}
+      {pestana === 'calendario' && (
+        <div>
+          <h2>📅 Calendario</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '10px 0' }}>
+            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() - 1))} style={{ padding: '6px 12px' }}>◀️</button>
+            <strong>{mesCalendario.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' })}</strong>
+            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() + 1))} style={{ padding: '6px 12px' }}>▶️</button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center' }}>
+            {['D','L','M','M','J','V','S'].map(d => <div key={d} style={{ fontWeight: 'bold', padding: '6px' }}>{d}</div>)}
+            {diasDelMes().map((dia, i) => {
+              if (!dia) return <div key={i} />;
+              const fechaDia = `${mesCalendario.getFullYear()}-${String(mesCalendario.getMonth()+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+              const tieneDatos = historial.some(c => new Date(c.fecha).toISOString().split('T')[0] === fechaDia);
+              const esHoy = fechaDia === hoy;
+              const seleccionado = fechaDia === fechaSeleccionada;
+              return (
+                <button
+                  key={i}
+                  onClick={() => setFechaSeleccionada(fechaDia)}
+                  style={{
+                    padding: '8px 4px',
+                    fontSize: '14px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: seleccionado ? '#10b981' : tieneDatos ? '#bbf7d0' : esHoy ? '#e5e7eb' : 'transparent',
+                    color: seleccionado ? 'white' : 'black',
+                    fontWeight: esHoy ? 'bold' : 'normal',
+                  }}
+                >
+                  {dia}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: '20px', padding: '12px', background: '#f9fafb', borderRadius: '8px' }}>
+            <h3>📋 Datos de: {fechaSeleccionada}</h3>
+            {comidasDelDia.length === 0 ? <p>Sin comidas registradas</p> : (
+              <div>
+                {comidasDelDia.map(c => (
+                  <div key={c.id} style={{ margin: '4px 0' }}>
+                    <strong>{c.tipo.charAt(0).toUpperCase() + c.tipo.slice(1)}</strong> — {Math.round(c.total.calorias)} kcal
+                  </div>
+                ))}
+                <hr style={{ margin: '8px 0' }} />
+                <strong>Total: {Math.round(totalDelDia.calorias)} kcal | {Math.round(totalDelDia.proteina)}g proteína</strong>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────── */}
+      {/* 🎯 PESTANA: METAS */}
+      {/* ────────────────────────────── */}
+      {pestana === 'metas' && (
+        <div>
+          <h2>🎯 Tus metas diarias</h2>
+          <p style={{ color: '#6b7280', fontSize: '14px' }}>Pon tus objetivos y la app te compara cada día</p>
+
+          <div style={{ display: 'grid', gap: '12px', margin: '15px 0' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🔥 Calorías objetivo</label>
+              <input type="number" value={metas.caloriasDiarias} onChange={(e) => setMetas({...metas, caloriasDiarias: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🥩 Proteína (gramos)</label>
+              <input type="number" value={metas.proteinaGramos} onChange={(e) => setMetas({...metas, proteinaGramos: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🔥 Calorías a quemar</label>
+              <input type="number" value={metas.caloriasQuemadas} onChange={(e) => setMetas({...metas, caloriasQuemadas: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>👣 Pasos mínimos</label>
+              <input type="number" value={metas.pasos} onChange={(e) => setMetas({...metas, pasos: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+            </div>
+          </div>
+
+          <button onClick={guardarMetas} style={{ padding: '10px 20px', fontSize: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%' }}>
+            💾 Guardar mis metas
+          </button>
+        </div>
+      )}
+
+      {/* ────────────────────────────── */}
+      {/* 📊 PESTANA: RESUMEN + EXPORTAR */}
+      {/* ────────────────────────────── */}
+      {pestana === 'resumen' && (
+        <div>
+          <h2>📊 Resumen y respaldo</h2>
+
+          <button onClick={exportarTodo} style={{ padding: '12px 24px', fontSize: '16px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%', marginBottom: '20px' }}>
+            📤 Exportar todas mis comidas (.csv para Excel)
+          </button>
+
+          <h3>Últimos 7 días</h3>
+          {(() => {
+            const ultimos7: Comida[][] = [];
+            const fechas = new Set(historial.map(c => new Date(c.fecha).toISOString().split('T')[0]));
+            Array.from(fechas).sort().reverse().slice(0,7).forEach(f => {
+              const comidas = historial.filter(c => new Date(c.fecha).toISOString().split('T')[0] === f);
+              const total = sumarNutrientes(comidas.map(c => c.total));
+              ultimos7.push([{ fecha: f, total }] as any);
+            });
+            return ultimos7.length === 0 ? <p>Sin datos aún</p> : ultimos7.map((d: any[], i) => (
+              <div key={i} style={{ padding: '8px 10px', margin: '4px 0', background: '#f3f4f6', borderRadius: '6px' }}>
+                <strong>{new Date(d[0].fecha).toLocaleDateString('es-MX')}</strong> — 🔥 {Math.round(d[0].total.calorias)} kcal | 🥩 {Math.round(d[0].total.proteina)}g proteína
+              </div>
+            ));
+          })()}
+        </div>
+      )}
     </div>
   );
-}
+};
 
 export default App;
