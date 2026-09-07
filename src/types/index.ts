@@ -29,20 +29,25 @@ export interface Comida {
   fecha: Date;
 }
 
-// ✅ Datos del reloj + peso
+// ✅ Datos del reloj + salud
 export interface DatosSaludDiarios {
-  fecha: string; // formato "YYYY-MM-DD"
+  fecha: string;
   pasos: number;
   caloriasQuemadas: number;
   horasSueno: number;
   pesoKg: number;
   masaMagraKg: number;
+  frecuenciaCardiaca: number; // 💓 NUEVO
 }
 
-// ✅ Metas del usuario
-export interface MetasUsuario {
-  caloriasDiarias: number;
-  proteinaGramos: number;
-  caloriasQuemadas: number;
-  pasos: number;
+// ✅ Meta semanal inteligente
+export type ObjetivoSemanal = 'bajar_peso' | 'mantener' | 'subir_peso' | 'ganar_musculo';
+
+export interface MetaSemanal {
+  semanaInicio: string; // fecha del lunes de esa semana
+  objetivo: ObjetivoSemanal;
+  caloriasObjetivo: number;
+  proteinaObjetivo: number;
+  recomendaciones: string[];
+  pesoInicial: number;
 }
