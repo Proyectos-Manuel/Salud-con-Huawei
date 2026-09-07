@@ -3,11 +3,11 @@ import EntradaVoz from './components/EntradaVoz';
 import DesgloseNutrientes from './components/DesgloseNutrientes';
 import Consejos from './components/Consejos';
 import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, generarConsejos } from './services/nutricionAPI';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement } from 'chart.js';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler } from 'chart.js';
 import { Line, Bar } from 'react-chartjs-2';
 import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetaSemanal, ObjetivoSemanal } from './types';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler);
 
 type TipoComida = 'desayuno' | 'comida' | 'cena' | 'merienda';
 type TipoGrafica = 'semanal' | 'mensual' | 'anual';
@@ -569,7 +569,7 @@ const App: React.FC = () => {
             <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() + 1))} style={{ padding: '6px 12px' }}>▶️</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center' }}>
-            {['D','L','M','M','J','V','S'].map(d => <div key={d} style={{ fontWeight: 'bold', padding: '6px' }}>{d}</div>)}
+            {['D','L','Ma','Mi','J','V','S'].map(d => <div key={d} style={{ fontWeight: 'bold', padding: '6px' }}>{d}</div>)}
             {diasDelMes().map((dia, i) => {
               if (!dia) return <div key={i} />;
               const fechaDia = `${mesCalendario.getFullYear()}-${String(mesCalendario.getMonth()+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
