@@ -643,7 +643,7 @@ const App: React.FC = () => {
                   labels: etiquetas,
                   datasets: [
                     { label: 'Proteína', data: datosProteina, backgroundColor: '#10b981' },
-                    ...(metaSemanal ? [{ label: 'Meta', data: etiquetas.map(() => metaSemanal.proteinaObjetivo), borderColor: '#ef4444', borderWidth: 2, type: 'line' as const, fill: false }] : []),
+                    ...(metaSemanal ? [{ label: 'Meta', data: etiquetas.map(() => metaSemanal.proteinaObjetivo), borderColor: '#ef4444', borderWidth: 2, type: 'line' as const }] : []),
                   ]
                 }} options={{ responsive: true }} />
               </div>
