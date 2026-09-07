@@ -642,8 +642,7 @@ const App: React.FC = () => {
                 <Bar data={{
                   labels: etiquetas,
                   datasets: [
-                    { label: 'Proteína', data: datosProteina, backgroundColor: '#10b981' },
-                    ...(metaSemanal ? [{ label: 'Meta', data: etiquetas.map(() => metaSemanal.proteinaObjetivo), borderColor: '#ef4444', borderWidth: 2, type: 'line' as const }] : []),
+                    { label: 'Proteína', data: datosProteina, backgroundColor: '#10b981' }
                   ]
                 }} options={{ responsive: true }} />
               </div>
