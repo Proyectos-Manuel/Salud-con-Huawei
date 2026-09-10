@@ -53,11 +53,7 @@ const App: React.FC = () => {
   const [mostrarPedirMeta, setMostrarPedirMeta] = useState(false);
   const [objetivoTemp, setObjetivoTemp] = useState<ObjetivoSemanal>('mantener');
   const [pesoTemp, setPesoTemp] = useState(0);
-  // 👇 Agrega estas líneas nuevas
-  const [semanaSeleccionada, setSemanaSeleccionada] = useState<number>(0); // 0=actual, -1=anterior, etc.
-  const [fechaInicioSemana, setFechaInicioSemana] = useState<string>('');
-  const [mostrarSelectorSemana, setMostrarSelectorSemana] = useState(false);
-
+ 
   const resumenSemanal = useMemo((): ResumenSemanal | null => {
     if (!metaSemanal) return null;
     const diasSemana: string[] = [];
