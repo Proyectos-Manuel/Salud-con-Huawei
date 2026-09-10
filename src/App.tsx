@@ -1,81 +1,218 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import EntradaVoz from './components/EntradaVoz';
 import DesgloseNutrientes from './components/DesgloseNutrientes';
 import Consejos from './components/Consejos';
-import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, generarConsejos } from './services/nutricionAPI';
-import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetasUsuario } from './types';
+import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, generarConsejos, calcularMetasCompletas } from './services/nutricionAPI';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler } from 'chart.js';
+import { Line, Bar } from 'react-chartjs-2';
+import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetaSemanal, ObjetivoSemanal, ResumenSemanal } from './types';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler);
 
 type TipoComida = 'desayuno' | 'comida' | 'cena' | 'merienda';
+type TipoGrafica = 'semanal' | 'mensual' | 'anual';
+
+const obtenerLunes = (fecha: Date = new Date()): string => {
+  const d = new Date(fecha);
+  const dia = d.getDay();
+  const diff = d.getDate() - dia + (dia === 0 ? -6 : 1);
+  const lunes = new Date(d.getFullYear(), d.getMonth(), diff);
+  return lunes.toISOString().split('T')[0];
+};
+
+const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+const porcentaje = (valor: number, meta: number): number => {
+  if (!meta || meta <= 0) return 0;
+  return Math.min(Math.round((valor / meta) * 100), 150);
+};
 
 const App: React.FC = () => {
+  const hoy = new Date().toISOString().split('T')[0];
+  const lunesSemana = obtenerLunes();
+  const inputImportar = useRef<HTMLInputElement>(null);
+
   const [textoDictado, setTextoDictado] = useState('');
   const [cargando, setCargando] = useState(false);
   const [listaAlimentos, setListaAlimentos] = useState<AlimentoDesglosado[]>([]);
-  const [, setComidaGuardada] = useState<Comida | null>(null);
   const [tipoComida, setTipoComida] = useState<TipoComida>('comida');
   const [historial, setHistorial] = useState<Comida[]>([]);
   const [mensaje, setMensaje] = useState('');
-
-  // 📅 Calendario y fecha seleccionada
-  const hoy = new Date().toISOString().split('T')[0];
   const [fechaSeleccionada, setFechaSeleccionada] = useState(hoy);
   const [mesCalendario, setMesCalendario] = useState(new Date());
+  const [pestana, setPestana] = useState<'comidas' | 'salud' | 'calendario' | 'metas' | 'resumen' | 'historial'>('comidas');
+  const [tipoGrafica, setTipoGrafica] = useState<TipoGrafica>('semanal');
+  const [comidaEnEdicion, setComidaEnEdicion] = useState<Comida | null>(null);
 
-  // 📋 Datos de salud del día
   const [datosSalud, setDatosSalud] = useState<DatosSaludDiarios>({
-    fecha: hoy,
-    pasos: 0,
-    caloriasQuemadas: 0,
-    horasSueno: 0,
-    pesoKg: 0,
-    masaMagraKg: 0,
+    fecha: hoy, pasos: 0, caloriasQuemadas: 0, horasSueno: 0,
+    pesoKg: 0, masaMagraKg: 0, frecuenciaCardiaca: 0,
   });
 
-  // 🎯 Metas del usuario
-  const [metas, setMetas] = useState<MetasUsuario>({
-    caloriasDiarias: 2000,
-    proteinaGramos: 80,
-    caloriasQuemadas: 500,
-    pasos: 8000,
-  });
+  const [metaSemanal, setMetaSemanal] = useState<MetaSemanal | null>(null);
+  const [mostrarPedirMeta, setMostrarPedirMeta] = useState(false);
+  const [objetivoTemp, setObjetivoTemp] = useState<ObjetivoSemanal>('mantener');
+  const [pesoTemp, setPesoTemp] = useState(0);
+ 
+  const resumenSemanal = useMemo((): ResumenSemanal | null => {
+    if (!metaSemanal) return null;
+    const diasSemana: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const f = new Date(lunesSemana);
+      f.setDate(f.getDate() + i);
+      diasSemana.push(f.toISOString().split('T')[0]);
+    }
 
-  // 📊 Pestañas
-  const [pestana, setPestana] = useState<'comidas' | 'salud' | 'calendario' | 'metas' | 'resumen'>('comidas');
+    const comidasSemana = historial.filter(c => diasSemana.includes(c.fecha));
+    const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+    const saludSemana = diasSemana.map(f => todosSalud[f]).filter(Boolean);
 
-  // ✅ Cargar datos guardados
+    const diasRegistrados = diasSemana.filter(f =>
+      historial.some(c => c.fecha === f) || todosSalud[f]
+    ).length || 1;
+
+    const totalCal = comidasSemana.reduce((s, c) => s + c.total.calorias, 0);
+    const totalPro = comidasSemana.reduce((s, c) => s + c.total.proteina, 0);
+    const totalGra = comidasSemana.reduce((s, c) => s + c.total.grasas, 0);
+    const totalCar = comidasSemana.reduce((s, c) => s + c.total.carbohidratos, 0);
+    const totalFib = comidasSemana.reduce((s, c) => s + c.total.fibra, 0);
+    const totalPasos = saludSemana.reduce((s: number, d: any) => s + (d?.pasos || 0), 0);
+    const totalSueno = saludSemana.reduce((s: number, d: any) => s + (d?.horasSueno || 0), 0);
+    const pesos = saludSemana.map((d: any) => d?.pesoKg).filter(Boolean);
+    const promPeso = pesos.length > 0 ? pesos.reduce((a: number, b: number) => a + b, 0) / pesos.length : 0;
+
+    const promCal = Math.round(totalCal / diasRegistrados);
+    const promPro = Math.round(totalPro / diasRegistrados);
+    const promGra = Math.round(totalGra / diasRegistrados);
+    const promCar = Math.round(totalCar / diasRegistrados);
+    const promFib = Math.round(totalFib / diasRegistrados);
+    const promPasos = Math.round(totalPasos / diasRegistrados);
+    const promSueno = Number((totalSueno / diasRegistrados).toFixed(1));
+
+    const cumPro = porcentaje(promPro, metaSemanal.proteinaObjetivo);
+    const cumCal = porcentaje(promCal, metaSemanal.caloriasObjetivo);
+
+    const recomendacionesFinales: string[] = [];
+    if (cumPro >= 90) recomendacionesFinales.push('✅ ¡Excelente! Cumpliste tu meta de proteína');
+    else if (cumPro >= 70) recomendacionesFinales.push('📈 Casi llegas a tu meta de proteína — ¡sube un poquito más!');
+    else recomendacionesFinales.push('🥩 Proteína baja esta semana — intenta huevos, pollo, pescado o legumbres');
+
+    if (promFib >= metaSemanal.fibraObjetivo * 0.8) recomendacionesFinales.push('✅ Buena ingesta de fibra — ¡sigue así!');
+    else recomendacionesFinales.push('🌾 Poca fibra — agrega verduras, frutas y cereales integrales');
+
+    if (promSueno >= 7) recomendacionesFinales.push('😴 ¡Excelente descanso! 7+ horas diarias');
+    else recomendacionesFinales.push('😴 Duerme un poco más — tu cuerpo se recupera al descansar');
+
+    if (promPasos >= 8000) recomendacionesFinales.push('👋 ¡Muy buena actividad física!');
+    else recomendacionesFinales.push('🚶 Intenta caminar un poco más cada día');
+
+    return {
+      semanaInicio: lunesSemana,
+      diasRegistrados,
+      promedioCalorias: promCal,
+      promedioProteina: promPro,
+      promedioGrasas: promGra,
+      promedioCarbohidratos: promCar,
+      promedioFibra: promFib,
+      promedioPasos: promPasos,
+      promedioSueno: promSueno,
+      promedioPeso: Number(promPeso.toFixed(1)),
+      cumplimientoProteina: cumPro,
+      cumplimientoCalorias: cumCal,
+      recomendacionesFinales,
+    };
+  }, [historial, metaSemanal, lunesSemana]);
+
+  useEffect(() => {
+    if (!metaSemanal || !resumenSemanal?.promedioPeso) return;
+    const cambioPeso = Math.abs(resumenSemanal.promedioPeso - metaSemanal.pesoInicial);
+    if (cambioPeso >= 1.5) {
+      const nuevasMetas = calcularMetasCompletas(metaSemanal.objetivo, resumenSemanal.promedioPeso);
+      const actualizada: MetaSemanal = {
+        ...metaSemanal,
+        pesoInicial: resumenSemanal.promedioPeso,
+        ...nuevasMetas,
+      };
+      setMetaSemanal(actualizada);
+      localStorage.setItem('metaSemanal', JSON.stringify(actualizada));
+      setMensaje(`⚖️ Tu peso cambió ${cambioPeso.toFixed(1)}kg → metas recalculadas automáticamente`);
+    }
+  }, [resumenSemanal?.promedioPeso]);
+
   useEffect(() => {
     try {
       const guardado = localStorage.getItem('historialComidas');
       if (guardado) setHistorial(JSON.parse(guardado));
-    } catch (e) { console.log('Sin historial'); }
+    } catch (e) {}
+
+    try {
+      const metaGuardada = localStorage.getItem('metaSemanal');
+      if (metaGuardada) {
+        const m: MetaSemanal = JSON.parse(metaGuardada);
+        setMetaSemanal(m);
+        if (m.semanaInicio !== lunesSemana) {
+          setMostrarPedirMeta(true);
+          setPesoTemp(m.pesoInicial);
+        }
+      } else {
+        setMostrarPedirMeta(true);
+      }
+    } catch (e) { setMostrarPedirMeta(true); }
 
     try {
       const saludGuardada = localStorage.getItem('datosSalud');
-      if (saludGuardada) setDatosSalud(JSON.parse(saludGuardada));
-    } catch (e) {}
-
-    try {
-      const metasGuardadas = localStorage.getItem('metasUsuario');
-      if (metasGuardadas) setMetas(JSON.parse(metasGuardadas));
+      if (saludGuardada) {
+        const todos = JSON.parse(saludGuardada);
+        if (todos[hoy]) setDatosSalud({ ...todos[hoy], fecha: hoy });
+      }
     } catch (e) {}
   }, []);
 
-  // ✅ Cambiar fecha → cargar datos de ese día
   useEffect(() => {
-    const guardado = localStorage.getItem('datosSalud');
-    if (guardado) {
-      const todos = JSON.parse(guardado);
-      if (todos[fechaSeleccionada]) {
-        setDatosSalud({ ...todos[fechaSeleccionada], fecha: fechaSeleccionada });
-      } else {
-        setDatosSalud({ fecha: fechaSeleccionada, pasos: 0, caloriasQuemadas: 0, horasSueno: 0, pesoKg: 0, masaMagraKg: 0 });
-      }
-    }
+    try {
+      const saludGuardada = localStorage.getItem('datosSalud');
+      if (saludGuardada) {
+        const todos = JSON.parse(saludGuardada);
+        if (todos[fechaSeleccionada]) {
+          setDatosSalud({
+            fecha: fechaSeleccionada,
+            pasos: todos[fechaSeleccionada].pasos || 0,
+            caloriasQuemadas: todos[fechaSeleccionada].caloriasQuemadas || 0,
+            horasSueno: todos[fechaSeleccionada].horasSueno || 0,
+            pesoKg: todos[fechaSeleccionada].pesoKg || 0,
+            masaMagraKg: todos[fechaSeleccionada].masaMagraKg || 0,
+            frecuenciaCardiaca: todos[fechaSeleccionada].frecuenciaCardiaca || 0,
+          });
+        } else {
+          setDatosSalud({
+            fecha: fechaSeleccionada,
+            pasos: 0,
+            caloriasQuemadas: 0,
+            horasSueno: 0,
+            pesoKg: 0,
+            masaMagraKg: 0,
+            frecuenciaCardiaca: 0,
+          });
+        }      }
+    } catch (e) {}
   }, [fechaSeleccionada]);
+
+  const guardarMetaSemanal = () => {
+    const metasCalc = calcularMetasCompletas(objetivoTemp, pesoTemp);
+    const nuevaMeta: MetaSemanal = {
+      semanaInicio: lunesSemana,
+      objetivo: objetivoTemp,
+      pesoInicial: pesoTemp,
+      ...metasCalc,
+    };
+    setMetaSemanal(nuevaMeta);
+    localStorage.setItem('metaSemanal', JSON.stringify(nuevaMeta));
+    setMostrarPedirMeta(false);
+    setMensaje('✅ Meta semanal guardada');
+  };
 
   const alRecibirTexto = (texto: string) => {
     setMensaje('');
-    setComidaGuardada(null);
     setListaAlimentos([]);
     setTextoDictado(texto);
   };
@@ -87,7 +224,6 @@ const App: React.FC = () => {
       return;
     }
     setCargando(true);
-
     try {
       const partes = desglosarAlimentos(textoDictado);
       if (!partes || partes.length === 0) {
@@ -95,30 +231,19 @@ const App: React.FC = () => {
         setCargando(false);
         return;
       }
-
       setMensaje(`🔍 ${partes.length} alimentos... buscando datos...`);
       const lista: AlimentoDesglosado[] = [];
-
       for (const parte of partes) {
         const nutrientes = await obtenerNutrientes(parte.nombre, parte.gramos);
-        lista.push({
-          id: crypto.randomUUID(),
-          textoOriginal: parte.texto,
-          nombre: parte.nombre,
-          gramos: parte.gramos,
-          nutrientes,
-          confirmado: true,
-        });
+        lista.push({ id: crypto.randomUUID(), textoOriginal: parte.texto, nombre: parte.nombre, gramos: parte.gramos, nutrientes, confirmado: true });
       }
-
       if (lista.length === 0) {
-        setMensaje('❌ No hay datos. Revisa tu clave API en .env');
+        setMensaje('❌ No hay datos. Revisa tu clave API.');
       } else {
         setMensaje(`✅ ¡Listo! ${lista.length} alimentos analizados`);
         setListaAlimentos(lista);
       }
     } catch (err) {
-      console.error(err);
       setMensaje('❌ Error al analizar. Revisa la clave API.');
     }
     setCargando(false);
@@ -136,63 +261,312 @@ const App: React.FC = () => {
     setListaAlimentos(prev => prev.filter(a => a.id !== id));
   };
 
-  // 💾 Guardar comida con fecha
   const guardarComida = () => {
     if (listaAlimentos.length === 0) {
       setMensaje('⚠️ No hay alimentos para guardar');
       return;
     }
     const total = sumarNutrientes(listaAlimentos.map(a => a.nutrientes));
-    const comida: Comida = {
-      id: crypto.randomUUID(),
-      tipo: tipoComida,
-      alimentos: listaAlimentos,
-      fecha: new Date(fechaSeleccionada),
-      total,
-    };
-    const nuevoHistorial = [comida, ...historial];
-    localStorage.setItem('historialComidas', JSON.stringify(nuevoHistorial));
-    setHistorial(nuevoHistorial);
-    setComidaGuardada(comida);
+
+    if (comidaEnEdicion) {
+      const actualizadas = historial.map(c =>
+        c.id === comidaEnEdicion.id
+          ? { ...c, tipo: tipoComida, alimentos: listaAlimentos, total }
+          : c
+      );
+      localStorage.setItem('historialComidas', JSON.stringify(actualizadas));
+      setHistorial(actualizadas);
+      setMensaje('✅ Comida actualizada');
+    } else {
+      const comida: Comida = { id: crypto.randomUUID(), tipo: tipoComida, alimentos: listaAlimentos, fecha: fechaSeleccionada, total };
+      const nuevoHistorial = [comida, ...historial];
+      localStorage.setItem('historialComidas', JSON.stringify(nuevoHistorial));
+      setHistorial(nuevoHistorial);
+      setMensaje('✅ Comida guardada');
+    }
     setListaAlimentos([]);
     setTextoDictado('');
+    setComidaEnEdicion(null);
   };
 
-  // 💾 Guardar datos de salud
+  const editarComida = (c: Comida) => {
+    setComidaEnEdicion(c);
+    setListaAlimentos([...c.alimentos]);
+    setTextoDictado(c.alimentos.map(a => `${a.gramos}g de ${a.nombre}`).join(' y '));
+    setTipoComida(c.tipo);
+    setFechaSeleccionada(c.fecha);
+    setPestana('comidas');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const borrarComida = (id: string) => {
+    if (!confirm('¿Eliminar esta comida?')) return;
+    const nuevo = historial.filter(c => c.id !== id);
+    localStorage.setItem('historialComidas', JSON.stringify(nuevo));
+    setHistorial(nuevo);
+    setMensaje('🗑️ Comida eliminada');
+  };
+
+  const copiarComida = (c: Comida) => {
+    const nueva: Comida = {
+      id: crypto.randomUUID(),
+      tipo: c.tipo,
+      alimentos: c.alimentos.map(a => ({ ...a, id: crypto.randomUUID() })),
+      fecha: fechaSeleccionada,
+      total: c.total,
+    };
+    const nuevoHistorial = [nueva, ...historial];
+    localStorage.setItem('historialComidas', JSON.stringify(nuevoHistorial));
+    setHistorial(nuevoHistorial);
+    setMensaje(`✅ Comida copiada como ${c.tipo} de hoy`);
+  };
+
+  const copiarComidasDeAyer = () => {
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+    const fechaAyer = ayer.toISOString().split('T')[0];
+    const comidasAyer = historial.filter(c => c.fecha === fechaAyer);
+    if (comidasAyer.length === 0) {
+      setMensaje('⚠️ No hay comidas de ayer para copiar');
+      return;
+    }
+    const copias = comidasAyer.map(c => ({
+      ...c,
+      id: crypto.randomUUID(),
+      fecha: fechaSeleccionada,
+      alimentos: c.alimentos.map(a => ({ ...a, id: crypto.randomUUID() })),
+    }));
+    const nuevoHistorial = [...copias, ...historial];
+    localStorage.setItem('historialComidas', JSON.stringify(nuevoHistorial));
+    setHistorial(nuevoHistorial);
+    setMensaje(`✅ Se copiaron ${copias.length} comidas de ayer`);
+  };
+
   const guardarDatosSalud = () => {
-    const todos = JSON.parse(localStorage.getItem('datosSalud') || '{}');
-    todos[fechaSeleccionada] = datosSalud;
-    localStorage.setItem('datosSalud', JSON.stringify(todos));
-    setMensaje('✅ Datos de salud guardados');
+    try {
+      // Leer lo que ya está guardado
+      const todosGuardados = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+      
+      // Crear copia limpia sin la fecha duplicada
+      const { fecha, ...datosSinFecha } = datosSalud;
+      
+      // Guardar solo los valores numéricos por fecha
+      todosGuardados[fechaSeleccionada] = datosSinFecha;
+      
+      // Guardar en localStorage
+      localStorage.setItem('datosSalud', JSON.stringify(todosGuardados));
+      
+      // Confirmar que se guardó recargando el valor
+      const confirmacion = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+      if (confirmacion[fechaSeleccionada]) {
+        setMensaje(`✅ ¡Datos guardados! Pasos: ${datosSalud.pasos} | Calorías quemadas: ${datosSalud.caloriasQuemadas}`);
+      } else {
+        setMensaje('⚠️ Se intentó guardar, pero no se pudo confirmar');
+      }
+    } catch (error) {
+      setMensaje('❌ Error al guardar: ' + (error as Error).message);
+    }
   };
 
-  // 💾 Guardar metas
-  const guardarMetas = () => {
-    localStorage.setItem('metasUsuario', JSON.stringify(metas));
-    setMensaje('✅ Metas guardadas');
-  };
-
-  // 📤 Exportar todo
   const exportarTodo = () => {
-    let csv = 'Tipo,Fecha,Alimento,Gramos,Calorías,Proteína,Carbohidratos,Grasas,Fibra,Hierro,Calcio,Potasio,Magnesio,Vitamina C,Vitamina A\n';
+    let csv = '=== COMIDAS ===\n';
+    csv += 'Tipo,Fecha,Alimento,Gramos,Calorías,Proteína,Carbohidratos,Grasas,Fibra,Hierro,Calcio,Potasio,Magnesio,Vitamina C,Vitamina A\n';
+    
     historial.forEach(c => {
-      const fecha = new Date(c.fecha).toLocaleDateString();
+      const fecha = new Date(c.fecha + 'T00:00:00').toLocaleDateString('es-MX');
       c.alimentos.forEach(a => {
-        csv += `${c.tipo},${fecha},"${a.nombre}",${a.gramos},${a.nutrientes.calorias},${a.nutrientes.proteina},${a.nutrientes.carbohidratos},${a.nutrientes.grasas},${a.nutrientes.fibra},${a.nutrientes.hierro},${a.nutrientes.calcio},${a.nutrientes.potasio},${a.nutrientes.magnesio},${a.nutrientes.vitaminaC},${a.nutrientes.vitaminaA}\n`;
+        csv += `${c.tipo},"${fecha}","${a.nombre}",${a.gramos},${a.nutrientes.calorias},${a.nutrientes.proteina},${a.nutrientes.carbohidratos},${a.nutrientes.grasas},${a.nutrientes.fibra},${a.nutrientes.hierro},${a.nutrientes.calcio},${a.nutrientes.potasio},${a.nutrientes.magnesio},${a.nutrientes.vitaminaC},${a.nutrientes.vitaminaA}\n`;
       });
+    });
+
+    // 📋 Agregar datos de salud
+    csv += '\n=== DATOS DE SALUD ===\n';
+    csv += 'Fecha,Pasos,Calorías Quemadas,Horas Sueño,Peso (kg),Masa Magra (kg),Frecuencia Cardíaca\n';
+    
+    const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+    Object.entries(todosSalud).forEach(([fecha, datos]: [string, any]) => {
+      const fechaLegible = new Date(fecha + 'T00:00:00').toLocaleDateString('es-MX');
+      csv += `"${fechaLegible}",${datos.pasos || 0},${datos.caloriasQuemadas || 0},${datos.horasSueno || 0},${datos.pesoKg || 0},${datos.masaMagraKg || 0},${datos.frecuenciaCardiaca || 0}\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Salud_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `Salud_Completa_${hoy}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    setMensaje('✅ Archivo descargado');
+    setMensaje(`✅ Archivo exportado: ${historial.length} comidas + ${Object.keys(todosSalud).length} días de salud`);
   };
 
-  // 📅 Generar días del mes para calendario
+  const importarDatos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    const lector = new FileReader();
+    lector.onload = (evento) => {
+      const texto = evento.target?.result as string;
+      const lineas = texto.split('\n').filter(l => l.trim());
+      const nuevas: Comida[] = [];
+
+      // ✅ Función mejorada para separar columnas (respeta comas dentro de comillas)
+      const separarColumnas = (linea: string): string[] => {
+        const resultado: string[] = [];
+        let actual = '';
+        let entreComillas = false;
+        for (const c of linea) {
+          if (c === '"') {
+            entreComillas = !entreComillas;
+          } else if (c === ',' && !entreComillas) {
+            resultado.push(actual.trim());
+            actual = '';
+          } else {
+            actual += c;
+          }
+        }
+        resultado.push(actual.trim());
+        return resultado;
+      };
+
+      for (let i = 1; i < lineas.length; i++) {
+        const celdas = separarColumnas(lineas[i]);
+        const lineaActual = lineas[i].trim();
+        // ✅ DETENERSE al llegar a la sección de salud
+        if (lineaActual.startsWith('===')) break;
+        if (!celdas || celdas.length < 7) continue;
+
+        const tipo = (celdas[0] || 'comida').trim().toLowerCase() as TipoComida;
+        const fechaTexto = (celdas[1] || hoy).trim();
+        const nombre = (celdas[2] || '').trim().replace(/^"|"$/g, '');
+        const gramos = parseFloat((celdas[3] || '0').replace(/^"|"$/g, '')) || 0;
+        const calorias = parseFloat((celdas[4] || '0').replace(/^"|"$/g, '')) || 0;
+        const proteina = parseFloat((celdas[5] || '0').replace(/^"|"$/g, '')) || 0;
+        const carbohidratos = parseFloat((celdas[6] || '0').replace(/^"|"$/g, '')) || 0;
+        const grasas = parseFloat((celdas[7] || '0').replace(/^"|"$/g, '')) || 0;
+        const fibra = parseFloat((celdas[8] || '0').replace(/^"|"$/g, '')) || 0;
+        const hierro = parseFloat((celdas[9] || '0').replace(/^"|"$/g, '')) || 0;
+        const calcio = parseFloat((celdas[10] || '0').replace(/^"|"$/g, '')) || 0;
+        const potasio = parseFloat((celdas[11] || '0').replace(/^"|"$/g, '')) || 0;
+        const magnesio = parseFloat((celdas[12] || '0').replace(/^"|"$/g, '')) || 0;
+        const vitaminaC = parseFloat((celdas[13] || '0').replace(/^"|"$/g, '')) || 0;
+        const vitaminaA = parseFloat((celdas[14] || '0').replace(/^"|"$/g, '')) || 0;
+
+        if (!nombre || gramos <= 0) continue;
+
+        // ✅ Convertir fecha correctamente
+        let fechaISO = hoy;
+        if (fechaTexto.includes('/')) {
+          const partes = fechaTexto.split('/');
+          if (partes.length === 3) {
+            const [dia, mes, anio] = partes;
+            const año = anio.length === 2 ? `20${anio}` : anio;
+            fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+          }
+        } else if (fechaTexto.includes('-')) {
+          fechaISO = fechaTexto;
+        }
+
+        const alimento: AlimentoDesglosado = {
+          id: crypto.randomUUID(),
+          textoOriginal: `${gramos}g de ${nombre}`,
+          nombre, gramos, confirmado: true,
+          nutrientes: { proteina, grasas, carbohidratos, fibra, calorias, hierro, calcio, potasio, magnesio, vitaminaC, vitaminaA },
+        };
+
+        nuevas.push({
+          id: crypto.randomUUID(),
+          tipo: tipo as TipoComida,
+          alimentos: [alimento],
+          fecha: fechaISO,
+          total: sumarNutrientes([alimento.nutrientes]),
+        });
+      }
+
+      if (nuevas.length === 0) {
+        setMensaje('⚠️ No se encontraron datos válidos en el archivo. Verifica el formato.');
+        return;
+      }
+      // =====================================================
+      // ✅ LECTURA CORREGIDA DE DATOS DE SALUD
+      // =====================================================
+      const saludNuevos: Record<string, any> = {};
+      let leyendoSalud = false;
+
+      for (let i = 0; i < lineas.length; i++) {
+        const linea = lineas[i].trim();
+                
+        // Detectar cuando empieza la sección de salud
+        if (linea.startsWith('=== DATOS DE SALUD ===')) {
+          leyendoSalud = true;
+          continue;
+        }
+        // Saltar encabezado y todo lo que no sea salud
+        if (!leyendoSalud || linea.startsWith('Fecha,Pasos')) continue;
+        if (!linea) continue;
+
+        // ✅ Separar columnas RESPETANDO las celdas VACÍAS
+        const celdasSalud: string[] = [];
+        let actual = '';
+        let entreComillas = false;
+        for (const c of linea) {
+          if (c === '"') {
+            entreComillas = !entreComillas;
+          } else if (c === ',' && !entreComillas) {
+            celdasSalud.push(actual.trim().replace(/^"|"$/g, ''));
+            actual = '';
+          } else {
+            actual += c;
+          }
+        }
+        celdasSalud.push(actual.trim().replace(/^"|"$/g, ''));
+
+        // ✅ Validar que tengamos al menos la fecha
+        if (celdasSalud.length < 1) continue;
+        const fechaTexto = celdasSalud[0];
+        if (!fechaTexto || fechaTexto.length < 8) continue;
+
+        // ✅ Convertir fecha dd/mm/aaaa → aaaa-mm-dd
+        let fechaISO = fechaTexto;
+        if (fechaTexto.includes('/')) {
+          const partes = fechaTexto.split('/');
+          if (partes.length === 3) {
+            let [dia, mes, anio] = partes;
+            if (anio.length === 2) anio = `20${anio}`;
+            if (mes.length === 1) mes = `0${mes}`;
+            if (dia.length === 1) dia = `0${dia}`;
+            fechaISO = `${anio}-${mes}-${dia}`;
+          }
+        }
+
+        // ✅ Leer valor de CADA columna POR SU POSICIÓN, vacío = 0
+        const pasos = celdasSalud[1] ? parseFloat(celdasSalud[1].replace(',', '.')) || 0 : 0;
+        const caloriasQuemadas = celdasSalud[2] ? parseFloat(celdasSalud[2].replace(',', '.')) || 0 : 0;
+        const horasSueno = celdasSalud[3] ? parseFloat(celdasSalud[3].replace(',', '.')) || 0 : 0;
+        const pesoKg = celdasSalud[4] ? parseFloat(celdasSalud[4].replace(',', '.')) || 0 : 0;
+        const masaMagraKg = celdasSalud[5] ? parseFloat(celdasSalud[5].replace(',', '.')) || 0 : 0;
+        const frecuenciaCardiaca = celdasSalud[6] ? parseFloat(celdasSalud[6].replace(',', '.')) || 0 : 0;
+
+        saludNuevos[fechaISO] = { pasos, caloriasQuemadas, horasSueno, pesoKg, masaMagraKg, frecuenciaCardiaca };
+      }
+
+      // ✅ Fusionar y guardar
+      const saludGuardada = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+      const saludFinal = { ...saludGuardada, ...saludNuevos };
+      localStorage.setItem('datosSalud', JSON.stringify(saludFinal));
+      // =====================================================
+      // ✅ FIN corregido
+      // =====================================================
+
+      // ✅ Ya NO elimina alimentos del mismo día y mismo tipo
+      const sinDuplicados = [...nuevas, ...historial];
+
+      const historialFinal = sinDuplicados;
+      localStorage.setItem('historialComidas', JSON.stringify(historialFinal));
+      setHistorial(sinDuplicados);
+      setMensaje(`✅ ¡Importadas ${nuevas.length} comidas y ${Object.keys(saludNuevos).length} días de salud!`);
+    };
+    lector.readAsText(new Blob([archivo], { type: 'text/csv;charset=utf-8;' }));
+  };
+
   const diasDelMes = () => {
     const año = mesCalendario.getFullYear();
     const mes = mesCalendario.getMonth();
@@ -204,59 +578,101 @@ const App: React.FC = () => {
     return dias;
   };
 
-  // 📊 Comidas de la fecha seleccionada
-  const comidasDelDia = historial.filter(c => {
-    const fechaComida = new Date(c.fecha).toISOString().split('T')[0];
-    return fechaComida === fechaSeleccionada;
-  });
-
+  const comidasDelDia = historial.filter(c => c.fecha === fechaSeleccionada);
   const totalDelDia = sumarNutrientes(comidasDelDia.map(c => c.total));
 
-  // 🎯 Recomendación según balance
+  const datosGrafica = useMemo(() => {
+    const agrupar: Record<string, { peso: number; proteina: number; calorias: number; caloriasQ: number; dias: number }> = {};
+    const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+
+    historial.forEach(c => {
+      const f = new Date(c.fecha + 'T00:00:00');
+      let clave = '';
+      if (tipoGrafica === 'semanal') clave = DIAS_SEMANA[f.getDay()];
+      else if (tipoGrafica === 'mensual') clave = `${f.getDate()}`;
+      else clave = f.toLocaleDateString('es-MX', { month: 'short' });
+
+      if (!agrupar[clave]) agrupar[clave] = { peso: 0, proteina: 0, calorias: 0, caloriasQ: 0, dias: 0 };
+      agrupar[clave].calorias += c.total.calorias;
+      agrupar[clave].proteina += c.total.proteina;
+      agrupar[clave].dias += 1;
+    });
+
+    Object.entries(todosSalud).forEach(([fecha, datos]: [string, any]) => {
+      const f = new Date(fecha + 'T00:00:00');
+      let clave = '';
+      if (tipoGrafica === 'semanal') clave = DIAS_SEMANA[f.getDay()];
+      else if (tipoGrafica === 'mensual') clave = `${f.getDate()}`;
+      else clave = f.toLocaleDateString('es-MX', { month: 'short' });
+
+      if (!agrupar[clave]) agrupar[clave] = { peso: 0, proteina: 0, calorias: 0, caloriasQ: 0, dias: 1 };
+      if (datos.pesoKg) agrupar[clave].peso = datos.pesoKg;
+      if (datos.caloriasQuemadas) agrupar[clave].caloriasQ = datos.caloriasQuemadas;
+    });
+
+    return agrupar;
+  }, [historial, tipoGrafica]);
+
+  const etiquetas = Object.keys(datosGrafica);
+  const datosPeso = etiquetas.map(d => datosGrafica[d].peso || null);
+  const datosProteina = etiquetas.map(d => Math.round(datosGrafica[d].proteina / (datosGrafica[d].dias || 1)));
+  const datosCalorias = etiquetas.map(d => Math.round(datosGrafica[d].calorias / (datosGrafica[d].dias || 1)));
+  const datosQuemadas = etiquetas.map(d => Math.round(datosGrafica[d].caloriasQ / (datosGrafica[d].dias || 1)));
+
   const recomendacionSalud = () => {
-    const saldoCalorias = totalDelDia.calorias - datosSalud.caloriasQuemadas;
-    if (saldoCalorias < -300) return { texto: '🔽 Estás quemando más calorías de las que consumes → ideal para bajar de peso', color: '#dbeafe' };
-    if (saldoCalorias > 300) return { texto: '🔼 Consumes más de lo que quemas → cuida las porciones para mantener peso', color: '#fef3c7' };
-    return { texto: '✅ Balance excelente → mantienes tu peso ideal', color: '#d1fae5' };
+    if (!metaSemanal) return { texto: 'Configura tu meta semanal', color: '#e5e7eb' };
+    const saldo = totalDelDia.calorias - datosSalud.caloriasQuemadas;
+    if (metaSemanal.objetivo === 'bajar_peso' && saldo < -300) return { texto: '✅ Vas por buen camino para bajar de peso', color: '#dbeafe' };
+    if (metaSemanal.objetivo === 'ganar_musculo' && totalDelDia.proteina >= metaSemanal.proteinaObjetivo) return { texto: '✅ ¡Excelente! Cumpliste tu meta de proteína', color: '#d1fae5' };
+    if (metaSemanal.objetivo === 'subir_peso' && saldo > 300) return { texto: '✅ Estás consumiendo suficiente para subir de peso', color: '#fef3c7' };
+    return { texto: '💡 Ajusta porciones o actividad para alcanzar tu meta', color: '#fef9c3' };
   };
 
   const consejos = generarConsejos(totalDelDia);
+  const comidasAyer = historial.filter(c => {
+    const ay = new Date(); ay.setDate(ay.getDate() - 1);
+    return c.fecha === ay.toISOString().split('T')[0];
+  });
 
   return (
-    <div style={{ maxWidth: '750px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif' }}>
-      <h1>💚 Salud con Huawei</h1>
+    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '16px', fontFamily: 'system-ui, -apple-system, sans-serif', background: '#fafafa', minHeight: '100vh' }}>
+      <h1 style={{ textAlign: 'center', color: '#065f46', marginBottom: '16px', fontSize: '22px' }}>💚 Salud con Huawei</h1>
 
-      {/* 📅 Selector de fecha */}
-      <div style={{ margin: '15px 0', textAlign: 'center' }}>
+      <div style={{ margin: '10px 0', textAlign: 'center', padding: '8px', background: '#fff', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
         <label style={{ fontWeight: 'bold', marginRight: '10px' }}>📅 Fecha:</label>
-        <input
-          type="date"
-          value={fechaSeleccionada}
-          onChange={(e) => setFechaSeleccionada(e.target.value)}
-          style={{ padding: '6px 10px', fontSize: '16px', borderRadius: '6px', border: '1px solid #ccc' }}
-        />
+        <input type="date" value={fechaSeleccionada} onChange={(e) => setFechaSeleccionada(e.target.value)} style={{ padding: '6px 10px', fontSize: '15px', borderRadius: '6px', border: '1px solid #d1d5db' }} />
+        {comidasAyer.length > 0 && comidasDelDia.length === 0 && (
+          <button onClick={copiarComidasDeAyer} style={{ marginLeft: '10px', padding: '6px 12px', fontSize: '14px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>📋 Copiar comidas de ayer</button>
+        )}
       </div>
 
-      {/* 🔘 Pestañas */}
+      {metaSemanal && !mostrarPedirMeta && (
+        <div style={{ margin: '12px 0', padding: '12px', background: '#ecfdf5', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
+          <strong>🎯 Meta semanal:</strong> {
+            { bajar_peso: '🔽 Bajar de peso', mantener: '⚖️ Mantener peso', subir_peso: '📈 Subir de peso saludablemente', ganar_musculo: '💪 Ganar masa muscular' }[metaSemanal.objetivo]
+          }
+          <br />🔥 {metaSemanal.caloriasObjetivo} kcal | 🥩 {metaSemanal.proteinaObjetivo}g proteína | 🥑 {metaSemanal.grasasObjetivo}g grasas | 🍞 {metaSemanal.carbohidratosObjetivo}g carbohidratos | 🌾 {metaSemanal.fibraObjetivo}g fibra
+        </div>
+      )}
+
+      {mensaje && <div style={{ margin: '10px 0', padding: '10px 14px', background: '#fef9c3', borderRadius: '6px', fontSize: '14px' }}>{mensaje}</div>}
+
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '15px 0' }}>
         {[
           { id: 'comidas', etiqueta: '🍽️ Comidas' },
-          { id: 'salud', etiqueta: '📋 Datos Salud' },
+          { id: 'salud', etiqueta: '📋 Salud' },
           { id: 'calendario', etiqueta: '📅 Calendario' },
-          { id: 'metas', etiqueta: '🎯 Metas' },
           { id: 'resumen', etiqueta: '📊 Resumen' },
+          { id: 'historial', etiqueta: '📋 Historial' },
         ].map(p => (
           <button
             key={p.id}
-            onClick={() => setPestana(p.id as any)}
+            onClick={() => { setPestana(p.id as any); setComidaEnEdicion(null); }}
             style={{
-              padding: '8px 12px',
-              fontSize: '14px',
-              background: pestana === p.id ? '#10b981' : '#e5e7eb',
-              color: pestana === p.id ? 'white' : 'black',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
+              padding: '8px 12px', fontSize: '14px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+              background: pestana === p.id ? '#059669' : '#e5e7eb',
+              color: pestana === p.id ? 'white' : '#1f2937',
+              fontWeight: pestana === p.id ? 600 : 'normal',
             }}
           >
             {p.etiqueta}
@@ -264,32 +680,66 @@ const App: React.FC = () => {
         ))}
       </div>
 
-      {/* ⚠️ Mensajes */}
-      {mensaje && (
-        <div style={{ margin: '10px 0', padding: '10px', background: '#fef9c3', borderRadius: '6px' }}>
-          {mensaje}
+      {mostrarPedirMeta && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '24px', borderRadius: '12px', maxWidth: '420px', width: '100%' }}>
+            <h2 style={{ marginTop: 0, color: '#065f46' }}>🎯 Meta para esta semana</h2>
+            <p style={{ color: '#6b7280', marginBottom: '18px' }}>Semana del {new Date(lunesSemana).toLocaleDateString('es-MX')}</p>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>¿Qué quieres lograr?</label>
+            {[
+              { v: 'bajar_peso', t: '🔽 Bajar de peso' },
+              { v: 'mantener', t: '⚖️ Mantener mi peso' },
+              { v: 'subir_peso', t: '📈 Subir de peso saludablemente' },
+              { v: 'ganar_musculo', t: '💪 Ganar masa muscular' },
+            ].map(opt => (
+              <button
+                key={opt.v}
+                onClick={() => setObjetivoTemp(opt.v as ObjetivoSemanal)}
+                style={{
+                  display: 'block', width: '100%', padding: '10px 12px', margin: '4px 0', textAlign: 'left', borderRadius: '6px', border: '2px solid transparent',
+                  background: objetivoTemp === opt.v ? '#ecfdf5' : '#f9fafb',
+                  borderColor: objetivoTemp === opt.v ? '#10b981' : 'transparent',
+                  cursor: 'pointer',
+                }}
+              >
+                {opt.t}
+              </button>
+            ))}
+            <div style={{ marginTop: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>Tu peso actual (kg):</label>
+              <input
+                type="number" step="0.1" value={pesoTemp || ''}
+                onChange={(e) => setPesoTemp(parseFloat(e.target.value) || 0)}
+                placeholder="Ej: 72.5"
+                style={{ width: '100%', padding: '10px', fontSize: '16px', borderRadius: '6px', border: '1px solid #d1d5db' }}
+              />
+            </div>
+            <button
+              onClick={guardarMetaSemanal}
+              disabled={!pesoTemp || pesoTemp <= 0}
+              style={{
+                marginTop: '20px', width: '100%', padding: '12px', fontSize: '16px', borderRadius: '8px', border: 'none',
+                background: pesoTemp && pesoTemp > 0 ? '#10b981' : '#9ca3af',
+                color: 'white', fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              ✅ Calcular mi meta
+            </button>
+          </div>
         </div>
       )}
 
-      {/* ────────────────────────────── */}
-      {/* 🍽️ PESTANA: COMIDAS */}
-      {/* ────────────────────────────── */}
       {pestana === 'comidas' && (
-        <div>
-          <h3>¿Qué vas a registrar hoy?</h3>
+        <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
+          <h3 style={{ marginTop: 0 }}>¿Qué vas a registrar?</h3>
           {(['desayuno', 'comida', 'cena', 'merienda'] as TipoComida[]).map(tipo => (
             <button
               key={tipo}
               onClick={() => setTipoComida(tipo)}
               style={{
-                padding: '8px 12px',
-                margin: '4px',
-                fontSize: '15px',
-                background: tipoComida === tipo ? '#10b981' : '#e5e7eb',
-                color: tipoComida === tipo ? 'white' : 'black',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
+                padding: '7px 11px', margin: '3px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                background: tipoComida === tipo ? '#059669' : '#f3f4f6',
+                color: tipoComida === tipo ? 'white' : '#374151',
               }}
             >
               {tipo === 'desayuno' && '🌅'}
@@ -302,34 +752,21 @@ const App: React.FC = () => {
 
           <EntradaVoz alRecibirTexto={alRecibirTexto} />
 
-          <div style={{ margin: '15px 0', padding: '12px', background: '#fef3c7', borderRadius: '8px' }}>
+          <div style={{ margin: '14px 0', padding: '12px', background: '#fffbeb', borderRadius: '8px' }}>
             <p style={{ margin: '0 0 8px 0', fontWeight: 'bold' }}>✍️ O escribe:</p>
             <input
-              type="text"
-              value={textoDictado}
-              onChange={(e) => setTextoDictado(e.target.value)}
+              type="text" value={textoDictado} onChange={(e) => setTextoDictado(e.target.value)}
               placeholder="Ej: 200g de pollo y 50g de quinoa"
-              style={{ width: '100%', padding: '8px', fontSize: '16px', borderRadius: '6px', border: '1px solid #ccc' }}
+              style={{ width: '100%', padding: '9px', fontSize: '15px', borderRadius: '6px', border: '1px solid #d1d5db' }}
             />
           </div>
 
-          {textoDictado && textoDictado.trim().length > 0 && (
-            <div style={{ margin: '15px 0', padding: '12px', background: '#f0fdf4', borderRadius: '8px' }}>
+          {textoDictado.trim().length > 0 && (
+            <div style={{ margin: '14px 0', padding: '12px', background: '#f0fdf4', borderRadius: '8px' }}>
               🗣️ Dijiste: <strong>{textoDictado}</strong>
               <button
-                onClick={analizarComida}
-                disabled={cargando}
-                style={{
-                  marginTop: '10px',
-                  padding: '10px 20px',
-                  fontSize: '16px',
-                  background: cargando ? '#9ca3af' : '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: cargando ? 'not-allowed' : 'pointer',
-                  width: '100%',
-                }}
+                onClick={analizarComida} disabled={cargando}
+                style={{ marginTop: '10px', padding: '10px', fontSize: '15px', width: '100%', borderRadius: '6px', border: 'none', cursor: cargando ? 'not-allowed' : 'pointer', background: cargando ? '#9ca3af' : '#10b981', color: 'white' }}
               >
                 {cargando ? '🔍 Buscando...' : '📊 Analizar comida'}
               </button>
@@ -337,45 +774,44 @@ const App: React.FC = () => {
           )}
 
           {listaAlimentos.length > 0 && !cargando && (
-            <div style={{ margin: '20px 0' }}>
-              <h4>🍽️ Alimentos:</h4>
+            <div style={{ margin: '18px 0' }}>
+              <h4 style={{ margin: '0 0 10px 0' }}>🍽️ Alimentos:</h4>
               {listaAlimentos.map((alimento, idx) => (
-                <div key={alimento.id} style={{ padding: '12px', margin: '8px 0', background: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div key={alimento.id} style={{ padding: '12px', margin: '8px 0', background: '#f9fafb', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <strong>{idx + 1}. {alimento.gramos}g de {alimento.nombre}</strong>
                     <div>
-                      <button onClick={() => {
-                        const nuevos = prompt('Nueva cantidad:', alimento.gramos.toString());
-                        if (nuevos && parseInt(nuevos) >= 10) cambiarGramos(alimento.id, parseInt(nuevos));
-                      }} style={{ margin: '0 4px', padding: '2px 6px', border: 'none', background: '#e5e7eb', borderRadius: '4px', cursor: 'pointer' }}>✏️</button>
-                      <button onClick={() => quitarAlimento(alimento.id)} style={{ margin: '0 4px', padding: '2px 6px', border: 'none', background: '#fee2e2', borderRadius: '4px', cursor: 'pointer', color: 'red' }}>❌</button>
+                      <button onClick={() => { const n = prompt('Nueva cantidad en gramos:', alimento.gramos.toString()); if (n && parseInt(n) >= 10) cambiarGramos(alimento.id, parseInt(n)); }} style={{ margin: '0 4px', padding: '3px 6px', border: 'none', background: '#e5e7eb', borderRadius: '4px', cursor: 'pointer' }}>✏️</button>
+                      <button onClick={() => quitarAlimento(alimento.id)} style={{ margin: '0 4px', padding: '3px 6px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '4px', cursor: 'pointer' }}>❌</button>
                     </div>
                   </div>
                   <DesgloseNutrientes nutrientes={alimento.nutrientes} />
                 </div>
               ))}
-
-              <div style={{ marginTop: '15px', padding: '12px', background: '#ecfdf5', borderRadius: '6px', border: '2px solid #10b981' }}>
-                <h4>📊 SUMA TOTAL:</h4>
+              <div style={{ marginTop: '14px', padding: '12px', background: '#ecfdf5', borderRadius: '6px', border: '2px solid #10b981' }}>
+                <h4 style={{ margin: '0 0 8px 0' }}>📊 SUMA TOTAL:</h4>
                 <DesgloseNutrientes nutrientes={sumarNutrientes(listaAlimentos.map(a => a.nutrientes))} />
               </div>
-
-              <button
-                onClick={guardarComida}
-                style={{ marginTop: '15px', padding: '10px 20px', fontSize: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%' }}
-              >
-                💾 Guardar esta comida
+              <button onClick={guardarComida} style={{ marginTop: '14px', padding: '11px', fontSize: '15px', width: '100%', borderRadius: '6px', border: 'none', cursor: 'pointer', background: '#059669', color: 'white', fontWeight: 600 }}>
+                💾 {comidaEnEdicion ? 'Actualizar comida' : 'Guardar comida'}
               </button>
             </div>
           )}
 
           {comidasDelDia.length > 0 && (
-            <div style={{ marginTop: '30px' }}>
+            <div style={{ marginTop: '24px' }}>
               <h3>📋 Comidas del día</h3>
               {comidasDelDia.map(c => (
                 <div key={c.id} style={{ padding: '10px', margin: '6px 0', background: '#f3f4f6', borderRadius: '6px' }}>
-                  <strong>{c.tipo.charAt(0).toUpperCase() + c.tipo.slice(1)}</strong> — {c.alimentos.length} alimento(s)
-                  <br />🔥 {Math.round(c.total.calorias)} kcal | 🥩 {Math.round(c.total.proteina)}g proteína
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>{c.tipo.charAt(0).toUpperCase() + c.tipo.slice(1)}</strong>
+                    <div>
+                      <button onClick={() => editarComida(c)} style={{ margin: '0 4px', padding: '4px 8px', fontSize: '13px', border: 'none', background: '#dbeafe', borderRadius: '4px', cursor: 'pointer' }}>✏️ Editar</button>
+                      <button onClick={() => copiarComida(c)} style={{ margin: '0 4px', padding: '4px 8px', fontSize: '13px', border: 'none', background: '#fef3c7', borderRadius: '4px', cursor: 'pointer' }}>📋 Copiar</button>
+                      <button onClick={() => borrarComida(c.id)} style={{ margin: '0 4px', padding: '4px 8px', fontSize: '13px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '4px', cursor: 'pointer' }}>🗑️</button>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '14px', color: '#4b5563' }}>🔥 {Math.round(c.total.calorias)} kcal | 🥩 {Math.round(c.total.proteina)}g proteína | {c.alimentos.length} alimento(s)</span>
                 </div>
               ))}
             </div>
@@ -383,174 +819,200 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* ────────────────────────────── */}
-      {/* 📋 PESTANA: DATOS DE SALUD */}
-      {/* ────────────────────────────── */}
       {pestana === 'salud' && (
-        <div>
-          <h2>📋 Datos del reloj y cuerpo</h2>
-          <p style={{ color: '#6b7280', fontSize: '14px' }}>Fecha: {fechaSeleccionada}</p>
+        <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
+          <h2 style={{ marginTop: 0 }}>📋 Datos del reloj y cuerpo</h2>
+          <p style={{ color: '#6b7280', fontSize: '14px', margin: '4px 0 16px 0' }}>Fecha: {fechaSeleccionada}</p>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', margin: '15px 0' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>👣 Pasos</label>
-              <input type="number" value={datosSalud.pasos || ''} onChange={(e) => setDatosSalud({ ...datosSalud, pasos: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🔥 Calorías quemadas</label>
-              <input type="number" value={datosSalud.caloriasQuemadas || ''} onChange={(e) => setDatosSalud({ ...datosSalud, caloriasQuemadas: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>😴 Horas de sueño</label>
-              <input type="number" step="0.1" value={datosSalud.horasSueno || ''} onChange={(e) => setDatosSalud({ ...datosSalud, horasSueno: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>⚖️ Peso (kg)</label>
-              <input type="number" step="0.1" value={datosSalud.pesoKg || ''} onChange={(e) => setDatosSalud({ ...datosSalud, pesoKg: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-            <div style={{ gridColumn: 'span 2' }}>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>💪 Masa magra (kg)</label>
-              <input type="number" step="0.1" value={datosSalud.masaMagraKg || ''} onChange={(e) => setDatosSalud({ ...datosSalud, masaMagraKg: Number(e.target.value) })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', margin: '15px 0' }}>
+            {[
+              { label: '👣 Pasos', key: 'pasos', type: 'number' },
+              { label: '🔥 Calorías quemadas', key: 'caloriasQuemadas', type: 'number' },
+              { label: '💓 Frecuencia cardíaca (ppm)', key: 'frecuenciaCardiaca', type: 'number' },
+              { label: '😴 Horas de sueño', key: 'horasSueno', type: 'decimal' },
+              { label: '⚖️ Peso (kg)', key: 'pesoKg', type: 'decimal' },
+              { label: '💪 Masa magra (kg)', key: 'masaMagraKg', type: 'decimal' },
+            ].map(f => (
+              <div key={f.key}>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 600, fontSize: '14px' }}>{f.label}</label>
+                <input
+                  type="number" step={f.type === 'decimal' ? '0.1' : '1'}
+                  value={(datosSalud as any)[f.key] || ''}
+                  onChange={(e) => setDatosSalud(prev => ({ ...prev, [f.key]: parseFloat(e.target.value) || 0 }))}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '15px' }}
+                />
+              </div>
+            ))}
           </div>
 
-          <button onClick={guardarDatosSalud} style={{ padding: '10px 20px', fontSize: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%' }}>
+          <button onClick={guardarDatosSalud} style={{ padding: '10px 20px', fontSize: '15px', width: '100%', borderRadius: '6px', border: 'none', cursor: 'pointer', background: '#059669', color: 'white', fontWeight: 600, marginTop: '8px' }}>
             💾 Guardar datos de salud
           </button>
 
-          {/* 🎯 Recomendación inteligente */}
-          {comidasDelDia.length > 0 && datosSalud.caloriasQuemadas > 0 && (
-            <div style={{ marginTop: '25px', padding: '15px', borderRadius: '8px', background: recomendacionSalud().color }}>
-              <h3>🎯 Balance del día</h3>
-              <p><strong>Calorías consumidas:</strong> {Math.round(totalDelDia.calorias)} kcal</p>
-              <p><strong>Calorías quemadas:</strong> {datosSalud.caloriasQuemadas} kcal</p>
-              <p><strong>Saldo:</strong> {Math.round(totalDelDia.calorias - datosSalud.caloriasQuemadas)} kcal</p>
-              <p style={{ marginTop: '10px', fontWeight: 'bold' }}>{recomendacionSalud().texto}</p>
-              {consejos && consejos.length > 0 && <Consejos consejos={consejos} />}
+          {comidasDelDia.length > 0 && (
+            <div style={{ marginTop: '20px', padding: '14px', borderRadius: '8px', background: recomendacionSalud().color }}>
+              <h3 style={{ margin: '0 0 8px 0', fontSize: '15px' }}>💡 Recomendación del día</h3>
+              <p style={{ margin: 0, fontSize: '14px' }}>{recomendacionSalud().texto}</p>
+              <Consejos nutrientes={totalDelDia} meta={metaSemanal} />
             </div>
           )}
         </div>
       )}
 
-      {/* ────────────────────────────── */}
-      {/* 📅 PESTANA: CALENDARIO */}
-      {/* ────────────────────────────── */}
       {pestana === 'calendario' && (
-        <div>
-          <h2>📅 Calendario</h2>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '10px 0' }}>
-            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() - 1))} style={{ padding: '6px 12px' }}>◀️</button>
+        <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() - 1))} style={{ padding: '6px 10px', border: 'none', background: '#e5e7eb', borderRadius: '4px', cursor: 'pointer' }}>◀</button>
             <strong>{mesCalendario.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' })}</strong>
-            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() + 1))} style={{ padding: '6px 12px' }}>▶️</button>
+            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() + 1))} style={{ padding: '6px 10px', border: 'none', background: '#e5e7eb', borderRadius: '4px', cursor: 'pointer' }}>▶</button>
           </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center' }}>
-            {['D','L','M','M','J','V','S'].map(d => <div key={d} style={{ fontWeight: 'bold', padding: '6px' }}>{d}</div>)}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', fontSize: '13px' }}>
+            {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((d, i) => <div key={i} style={{ fontWeight: 'bold', padding: '4px' }}>{d}</div>)}
             {diasDelMes().map((dia, i) => {
               if (!dia) return <div key={i} />;
-              const fechaDia = `${mesCalendario.getFullYear()}-${String(mesCalendario.getMonth()+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
-              const tieneDatos = historial.some(c => new Date(c.fecha).toISOString().split('T')[0] === fechaDia);
-              const esHoy = fechaDia === hoy;
-              const seleccionado = fechaDia === fechaSeleccionada;
+              const fecha = `${mesCalendario.getFullYear()}-${String(mesCalendario.getMonth() + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+              const tiene = historial.some(c => c.fecha === fecha);
+              const esHoy = fecha === hoy;
+              const seleccionada = fecha === fechaSeleccionada;
               return (
                 <button
                   key={i}
-                  onClick={() => setFechaSeleccionada(fechaDia)}
+                  onClick={() => setFechaSeleccionada(fecha)}
                   style={{
-                    padding: '8px 4px',
-                    fontSize: '14px',
+                    fontWeight: seleccionada ? 'bold' : 'normal',
+                    border: esHoy ? '2px solid #059669' : seleccionada ? '2px solid #3b82f6' : '2px solid transparent',
+                    background: tiene 
+                      ? (seleccionada ? '#dbeafe' : '#d1fae5')
+                      : (seleccionada ? '#e5e7eb' : 'transparent'),
                     borderRadius: '6px',
-                    border: 'none',
+                    padding: '6px 4px',
                     cursor: 'pointer',
-                    background: seleccionado ? '#10b981' : tieneDatos ? '#bbf7d0' : esHoy ? '#e5e7eb' : 'transparent',
-                    color: seleccionado ? 'white' : 'black',
-                    fontWeight: esHoy ? 'bold' : 'normal',
+                    color: tiene ? '#065f46' : 'inherit',
                   }}
                 >
                   {dia}
+                  {tiene && <div style={{ fontSize: '7px', color: '#059669' }}>●</div>}
                 </button>
               );
             })}
           </div>
+        </div>
+      )}
 
-          <div style={{ marginTop: '20px', padding: '12px', background: '#f9fafb', borderRadius: '8px' }}>
-            <h3>📋 Datos de: {fechaSeleccionada}</h3>
-            {comidasDelDia.length === 0 ? <p>Sin comidas registradas</p> : (
-              <div>
-                {comidasDelDia.map(c => (
-                  <div key={c.id} style={{ margin: '4px 0' }}>
-                    <strong>{c.tipo.charAt(0).toUpperCase() + c.tipo.slice(1)}</strong> — {Math.round(c.total.calorias)} kcal
+      {pestana === 'resumen' && resumenSemanal && (
+        <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
+          <h2 style={{ marginTop: 0 }}>📊 Resumen Semanal</h2>
+          <p style={{ color: '#6b7280', fontSize: '14px' }}>Semana del {new Date(resumenSemanal.semanaInicio).toLocaleDateString('es-MX')}</p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', margin: '16px 0' }}>
+            {[
+              { etiq: '🔥 Calorías/día', valor: `${resumenSemanal.promedioCalorias} kcal` },
+              { etiq: '🥩 Proteína/día', valor: `${resumenSemanal.promedioProteina} g` },
+              { etiq: '⚖️ Peso prom.', valor: resumenSemanal.promedioPeso ? `${resumenSemanal.promedioPeso} kg` : '—' },
+              { etiq: '👣 Pasos/día', valor: `${resumenSemanal.promedioPasos}` },
+              { etiq: '😴 Sueño', valor: `${resumenSemanal.promedioSueno} h` },
+              { etiq: '📅 Días reg.', valor: `${resumenSemanal.diasRegistrados}` },
+            ].map((x, i) => (
+              <div key={i} style={{ padding: '10px', background: '#f9fafb', borderRadius: '6px', textAlign: 'center' }}>
+                <div style={{ fontSize: '13px', color: '#6b7280' }}>{x.etiq}</div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '4px' }}>{x.valor}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', margin: '14px 0' }}>
+            {(['semanal', 'mensual', 'anual'] as TipoGrafica[]).map(t => (
+              <button
+                key={t}
+                onClick={() => setTipoGrafica(t)}
+                style={{
+                  padding: '6px 12px', fontSize: '13px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                  background: tipoGrafica === t ? '#059669' : '#e5e7eb',
+                  color: tipoGrafica === t ? 'white' : '#374151',
+                }}
+              >
+                {{ semanal: '📅 Semanal', mensual: '📆 Mensual', anual: '🗓️ Anual' }[t]}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ margin: '18px 0', height: 260 }}>
+            <Line
+              data={{
+                labels: etiquetas,
+                datasets: [
+                  { label: 'Proteína (g/día)', data: datosProteina, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', tension: 0.3, fill: true },
+                  { label: 'Calorías consumidas', data: datosCalorias, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', tension: 0.3, fill: true },
+                  { label: 'Calorías quemadas', data: datosQuemadas, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.3, fill: true },
+                ],
+              }}
+              options={{ responsive: true, maintainAspectRatio: false }}
+            />
+          </div>
+
+          {resumenSemanal.promedioPeso > 0 && (
+            <div style={{ margin: '18px 0', height: 220 }}>
+              <Bar
+                data={{
+                  labels: etiquetas,
+                  datasets: [{ label: 'Peso (kg)', data: datosPeso, backgroundColor: '#8b5cf6' }],
+                }}
+                options={{ responsive: true, maintainAspectRatio: false }}
+              />
+            </div>
+          )}
+
+          <div style={{ marginTop: '20px', padding: '14px', background: '#f0fdf4', borderRadius: '8px' }}>
+            <h4 style={{ margin: '0 0 10px 0' }}>💡 Recomendaciones de la semana</h4>
+            <ul style={{ margin: 0, paddingLeft: '20px' }}>
+              {resumenSemanal.recomendacionesFinales.map((r, i) => (
+                <li key={i} style={{ margin: '4px 0', fontSize: '14px' }}>{r}</li>
+              ))}
+            </ul>
+          </div>
+
+          <button onClick={() => { setMostrarPedirMeta(true); setPesoTemp(resumenSemanal.promedioPeso || 0); }} style={{ marginTop: '16px', padding: '9px 14px', fontSize: '14px', border: 'none', borderRadius: '6px', background: '#e5e7eb', cursor: 'pointer' }}>
+            🔄 Cambiar mi meta
+          </button>
+        </div>
+      )}
+
+      {pestana === 'historial' && (
+        <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <button onClick={exportarTodo} style={{ padding: '8px 14px', fontSize: '14px', border: 'none', borderRadius: '6px', background: '#10b981', color: 'white', cursor: 'pointer' }}>
+              📤 Exportar todo (.csv)
+            </button>
+            <button onClick={() => inputImportar.current?.click()} style={{ padding: '8px 14px', fontSize: '14px', border: 'none', borderRadius: '6px', background: '#3b82f6', color: 'white', cursor: 'pointer' }}>
+              📥 Importar
+            </button>
+            <input ref={inputImportar} type="file" accept=".csv" onChange={importarDatos} style={{ display: 'none' }} />
+          </div>
+
+          <h3 style={{ margin: '0 0 12px 0' }}>📋 Historial de comidas</h3>
+          {historial.length === 0 ? (
+            <p style={{ color: '#6b7280' }}>Aún no has guardado ninguna comida.</p>
+          ) : (
+            historial.slice(0, 30).map(c => (
+              <div key={c.id} style={{ padding: '10px', margin: '6px 0', background: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong>
+                    {c.tipo.charAt(0).toUpperCase() + c.tipo.slice(1)} — {new Date(c.fecha + 'T00:00:00').toLocaleDateString('es-MX')}
+                  </strong>
+                  <div>
+                    <button onClick={() => { setFechaSeleccionada(c.fecha); editarComida(c); }} style={{ margin: '0 4px', padding: '3px 6px', fontSize: '12px', border: 'none', background: '#dbeafe', borderRadius: '4px', cursor: 'pointer' }}>✏️</button>
+                    <button onClick={() => borrarComida(c.id)} style={{ margin: '0 4px', padding: '3px 6px', fontSize: '12px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '4px', cursor: 'pointer' }}>🗑️</button>
                   </div>
-                ))}
-                <hr style={{ margin: '8px 0' }} />
-                <strong>Total: {Math.round(totalDelDia.calorias)} kcal | {Math.round(totalDelDia.proteina)}g proteína</strong>
+                </div>
+                <div style={{ fontSize: '13px', color: '#4b5563', marginTop: '4px' }}>
+                  🔥 {Math.round(c.total.calorias)} kcal | 🥩 {Math.round(c.total.proteina)}g proteína | {c.alimentos.length} alimento(s)
+                </div>
               </div>
-            )}
-          </div>
+            ))
+          )}
         </div>
       )}
 
-      {/* ────────────────────────────── */}
-      {/* 🎯 PESTANA: METAS */}
-      {/* ────────────────────────────── */}
-      {pestana === 'metas' && (
-        <div>
-          <h2>🎯 Tus metas diarias</h2>
-          <p style={{ color: '#6b7280', fontSize: '14px' }}>Pon tus objetivos y la app te compara cada día</p>
-
-          <div style={{ display: 'grid', gap: '12px', margin: '15px 0' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🔥 Calorías objetivo</label>
-              <input type="number" value={metas.caloriasDiarias} onChange={(e) => setMetas({...metas, caloriasDiarias: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🥩 Proteína (gramos)</label>
-              <input type="number" value={metas.proteinaGramos} onChange={(e) => setMetas({...metas, proteinaGramos: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>🔥 Calorías a quemar</label>
-              <input type="number" value={metas.caloriasQuemadas} onChange={(e) => setMetas({...metas, caloriasQuemadas: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>👣 Pasos mínimos</label>
-              <input type="number" value={metas.pasos} onChange={(e) => setMetas({...metas, pasos: Number(e.target.value)})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-            </div>
-          </div>
-
-          <button onClick={guardarMetas} style={{ padding: '10px 20px', fontSize: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%' }}>
-            💾 Guardar mis metas
-          </button>
-        </div>
-      )}
-
-      {/* ────────────────────────────── */}
-      {/* 📊 PESTANA: RESUMEN + EXPORTAR */}
-      {/* ────────────────────────────── */}
-      {pestana === 'resumen' && (
-        <div>
-          <h2>📊 Resumen y respaldo</h2>
-
-          <button onClick={exportarTodo} style={{ padding: '12px 24px', fontSize: '16px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', width: '100%', marginBottom: '20px' }}>
-            📤 Exportar todas mis comidas (.csv para Excel)
-          </button>
-
-          <h3>Últimos 7 días</h3>
-          {(() => {
-            const ultimos7: Comida[][] = [];
-            const fechas = new Set(historial.map(c => new Date(c.fecha).toISOString().split('T')[0]));
-            Array.from(fechas).sort().reverse().slice(0,7).forEach(f => {
-              const comidas = historial.filter(c => new Date(c.fecha).toISOString().split('T')[0] === f);
-              const total = sumarNutrientes(comidas.map(c => c.total));
-              ultimos7.push([{ fecha: f, total }] as any);
-            });
-            return ultimos7.length === 0 ? <p>Sin datos aún</p> : ultimos7.map((d: any[], i) => (
-              <div key={i} style={{ padding: '8px 10px', margin: '4px 0', background: '#f3f4f6', borderRadius: '6px' }}>
-                <strong>{new Date(d[0].fecha).toLocaleDateString('es-MX')}</strong> — 🔥 {Math.round(d[0].total.calorias)} kcal | 🥩 {Math.round(d[0].total.proteina)}g proteína
-              </div>
-            ));
-          })()}
-        </div>
-      )}
     </div>
   );
 };
