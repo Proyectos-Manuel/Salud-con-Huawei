@@ -12,6 +12,10 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarEleme
 type TipoComida = 'desayuno' | 'comida' | 'cena' | 'merienda';
 type TipoGrafica = 'semanal' | 'mensual' | 'anual';
 
+// ✅ Días en orden correcto: Lunes primero
+const DIAS_SEMANA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+// ✅ Obtener lunes de cualquier fecha dada
 const obtenerLunes = (fecha: Date = new Date()): string => {
   const d = new Date(fecha);
   const dia = d.getDay();
@@ -20,8 +24,6 @@ const obtenerLunes = (fecha: Date = new Date()): string => {
   return lunes.toISOString().split('T')[0];
 };
 
-const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-
 const porcentaje = (valor: number, meta: number): number => {
   if (!meta || meta <= 0) return 0;
   return Math.min(Math.round((valor / meta) * 100), 150);
@@ -29,7 +31,7 @@ const porcentaje = (valor: number, meta: number): number => {
 
 const App: React.FC = () => {
   const hoy = new Date().toISOString().split('T')[0];
-  const lunesSemana = obtenerLunes();
+  const lunesSemanaActual = obtenerLunes();
   const inputImportar = useRef<HTMLInputElement>(null);
 
   const [textoDictado, setTextoDictado] = useState('');
@@ -43,18 +45,65 @@ const App: React.FC = () => {
   const [pestana, setPestana] = useState<'comidas' | 'salud' | 'calendario' | 'metas' | 'resumen' | 'historial'>('comidas');
   const [tipoGrafica, setTipoGrafica] = useState<TipoGrafica>('semanal');
   const [comidaEnEdicion, setComidaEnEdicion] = useState<Comida | null>(null);
+  const [semanaResumen, setSemanaResumen] = useState(lunesSemanaActual); // ✅ Semana seleccionada
 
   const [datosSalud, setDatosSalud] = useState<DatosSaludDiarios>({
     fecha: hoy, pasos: 0, caloriasQuemadas: 0, horasSueno: 0,
     pesoKg: 0, masaMagraKg: 0, frecuenciaCardiaca: 0,
   });
-
   const [metaSemanal, setMetaSemanal] = useState<MetaSemanal | null>(null);
   const [mostrarPedirMeta, setMostrarPedirMeta] = useState(false);
   const [objetivoTemp, setObjetivoTemp] = useState<ObjetivoSemanal>('mantener');
   const [pesoTemp, setPesoTemp] = useState(0);
-  const [semanaResumen, setSemanaResumen] = useState(lunesSemana);
 
+  // ✅ Función para obtener recomendaciones de UN DÍA ESPECÍFICO
+  const obtenerRecomendacionDia = useMemo(() => (fecha: string): { texto: string; color: string } => {
+    if (!metaSemanal) return { texto: 'Configura tu meta semanal para ver recomendaciones', color: '#e5e7eb' };
+
+    const comidasDelDia = historial.filter(c => c.fecha === fecha);
+    const totalDia = comidasDelDia.length > 0
+      ? sumarNutrientes(comidasDelDia.map(c => c.total))
+      : { calorias: 0, proteina: 0, grasas: 0, carbohidratos: 0, fibra: 0, hierro: 0, calcio: 0, potasio: 0, magnesio: 0, vitaminaC: 0, vitaminaA: 0 };
+
+    const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+    const saludDia = todosSalud[fecha] || { pasos: 0, caloriasQuemadas: 0, horasSueno: 0 };
+
+    const saldo = totalDia.calorias - (saludDia.caloriasQuemadas || 0);
+    const recomendaciones: string[] = [];
+
+    if (saludDia.pasos && saludDia.pasos >= 8000) recomendaciones.push('✅ ¡Excelente actividad física hoy!');
+    else if (saludDia.pasos && saludDia.pasos > 0) recomendaciones.push('🚶 Buen avance, intenta caminar un poco más');
+    else recomendaciones.push('👣 Registra tus pasos para ver tu actividad');
+
+    if (totalDia.proteina >= metaSemanal.proteinaObjetivo) recomendaciones.push('✅ ¡Meta de proteína cumplida!');
+    else if (totalDia.proteina > 0) recomendaciones.push(`🥩 Te faltan ${Math.max(0, metaSemanal.proteinaObjetivo - totalDia.proteina).toFixed(0)}g de proteína hoy`);
+    else recomendaciones.push('🥩 Registra tus comidas para ver tu proteína');
+
+    if (saludDia.horasSueno >= 7) recomendaciones.push('😴 ¡Excelente descanso!');
+    else if (saludDia.horasSueno > 0) recomendaciones.push('😴 Intenta dormir al menos 7 horas');
+
+    if (metaSemanal.objetivo === 'bajar_peso') {
+      if (saldo < -300) recomendaciones.push('✅ Vas por buen camino para bajar de peso');
+      else if (saldo > 0) recomendaciones.push('⚖️ Consume menos calorías o aumenta tu actividad');
+    } else if (metaSemanal.objetivo === 'ganar_musculo') {
+      if (totalDia.proteina >= metaSemanal.proteinaObjetivo && saldo > 200) recomendaciones.push('✅ ¡Perfecto para ganar músculo!');
+      else recomendaciones.push('💪 Aumenta proteína y calorías saludables');
+    } else if (metaSemanal.objetivo === 'subir_peso') {
+      if (saldo > 300) recomendaciones.push('✅ Estás consumiendo suficiente para subir de peso');
+      else recomendaciones.push('📈 Consume un poco más de calorías saludables');
+    } else {
+      if (Math.abs(saldo) < 200) recomendaciones.push('✅ Mantienes buen equilibrio calórico');
+      else if (saldo > 300) recomendaciones.push('⚠️ Consumiste más de lo recomendado hoy');
+      else recomendaciones.push('💡 Puedes consumir un poco más para mantenerte');
+    }
+
+    return {
+      texto: recomendaciones.length > 0 ? recomendaciones.join(' | ') : 'No hay datos suficientes para este día',
+      color: saldo < -300 ? '#dbeafe' : saldo > 300 ? '#fef3c7' : '#d1fae5'
+    };
+  }, [historial, metaSemanal]);
+
+  // ✅ RESUMEN SEMANAL — ahora usa la semana seleccionada
   const resumenSemanal = useMemo((): ResumenSemanal | null => {
     if (!metaSemanal) return null;
     const diasSemana: string[] = [];
@@ -67,7 +116,6 @@ const App: React.FC = () => {
     const comidasSemana = historial.filter(c => diasSemana.includes(c.fecha));
     const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
     const saludSemana = diasSemana.map(f => todosSalud[f]).filter(Boolean);
-
     const diasRegistrados = diasSemana.filter(f =>
       historial.some(c => c.fecha === f) || todosSalud[f]
     ).length || 1;
@@ -94,18 +142,22 @@ const App: React.FC = () => {
     const cumCal = porcentaje(promCal, metaSemanal.caloriasObjetivo);
 
     const recomendacionesFinales: string[] = [];
-    if (cumPro >= 90) recomendacionesFinales.push('✅ ¡Excelente! Cumpliste tu meta de proteína');
+    if (cumPro >= 90) recomendacionesFinales.push('✅ ¡Excelente! Cumpliste tu meta de proteína esta semana');
     else if (cumPro >= 70) recomendacionesFinales.push('📈 Casi llegas a tu meta de proteína — ¡sube un poquito más!');
     else recomendacionesFinales.push('🥩 Proteína baja esta semana — intenta huevos, pollo, pescado o legumbres');
 
     if (promFib >= metaSemanal.fibraObjetivo * 0.8) recomendacionesFinales.push('✅ Buena ingesta de fibra — ¡sigue así!');
-    else recomendacionesFinales.push('🌾 Poca fibra — agrega verduras, frutas y cereales integrales');
+    else recomendacionesFinales.push('🌾 Poca fibra esta semana — agrega verduras, frutas y cereales integrales');
 
-    if (promSueno >= 7) recomendacionesFinales.push('😴 ¡Excelente descanso! 7+ horas diarias');
+    if (promSueno >= 7) recomendacionesFinales.push('😴 ¡Excelente descanso! 7+ horas en promedio');
     else recomendacionesFinales.push('😴 Duerme un poco más — tu cuerpo se recupera al descansar');
 
-    if (promPasos >= 8000) recomendacionesFinales.push('👋 ¡Muy buena actividad física!');
-    else recomendacionesFinales.push('🚶 Intenta caminar un poco más cada día');
+    if (promPasos >= 8000) recomendacionesFinales.push('👋 ¡Muy buena actividad física esta semana!');
+    else recomendacionesFinales.push('🚶 Intenta caminar más cada día para mejorar tu promedio');
+
+    if (promPeso > 0) {
+      recomendacionesFinales.push(`⚖️ Peso promedio: ${promPeso.toFixed(1)} kg`);
+    }
 
     return {
       semanaInicio: semanaResumen,
@@ -122,18 +174,84 @@ const App: React.FC = () => {
       cumplimientoCalorias: cumCal,
       recomendacionesFinales,
     };
-  }, [historial, metaSemanal, semanaResumen]);
+  }, [historial, metaSemanal, semanaResumen]); // ✅ Ahora cambia cuando cambias de semana
 
+  // ✅ GRÁFICA — ahora usa los días EN ORDEN CORRECTO y la SEMANA SELECCIONADA
+  const datosGrafica = useMemo(() => {
+    const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
+
+    if (tipoGrafica === 'semanal') {
+      // ✅ Gráfica SEMANAL: SIEMPRE en orden Lunes → Domingo
+      const datosSemana: { proteina: number; calorias: number; caloriasQ: number; peso: number }[] = [];
+      for (let i = 0; i < 7; i++) {
+        const f = new Date(semanaResumen);
+        f.setDate(f.getDate() + i);
+        const fechaISO = f.toISOString().split('T')[0];
+
+        const comidasDia = historial.filter(c => c.fecha === fechaISO);
+        const saludDia = todosSalud[fechaISO] || {};
+        const diasConDatos = comidasDia.length + (saludDia?.pasos ? 1 : 0) || 1;
+
+        datosSemana.push({
+          proteina: Math.round(comidasDia.reduce((s, c) => s + c.total.proteina, 0) / (diasConDatos || 1)),
+          calorias: Math.round(comidasDia.reduce((s, c) => s + c.total.calorias, 0) / (diasConDatos || 1)),
+          caloriasQ: Math.round((saludDia?.caloriasQuemadas || 0) / (diasConDatos || 1)),
+          peso: saludDia?.pesoKg || null,
+        });
+      }
+      return { etiquetas: DIAS_SEMANA, datos: datosSemana };
+    }
+
+    // Mensual y Anual (se mantienen igual)
+    const agrupar: Record<string, { proteina: number; calorias: number; caloriasQ: number; peso: number; dias: number }> = {};
+    historial.forEach(c => {
+      const f = new Date(c.fecha + 'T00:00:00');
+      let clave = '';
+      if (tipoGrafica === 'mensual') clave = `${f.getDate()}`;
+      else clave = f.toLocaleDateString('es-MX', { month: 'short' });
+
+      if (!agrupar[clave]) agrupar[clave] = { proteina: 0, calorias: 0, caloriasQ: 0, peso: 0, dias: 1 };
+      agrupar[clave].calorias += c.total.calorias;
+      agrupar[clave].proteina += c.total.proteina;
+      agrupar[clave].dias += 1;
+    });
+
+    Object.entries(todosSalud).forEach(([fecha, datos]: [string, any]) => {
+      const f = new Date(fecha + 'T00:00:00');
+      let clave = '';
+      if (tipoGrafica === 'mensual') clave = `${f.getDate()}`;
+      else clave = f.toLocaleDateString('es-MX', { month: 'short' });
+
+      if (!agrupar[clave]) agrupar[clave] = { proteina: 0, calorias: 0, caloriasQ: 0, peso: 0, dias: 1 };
+      if (datos?.pesoKg) agrupar[clave].peso = datos.pesoKg;
+      if (datos?.caloriasQuemadas) agrupar[clave].caloriasQ = datos.caloriasQuemadas;
+    });
+
+    const etiquetas = Object.keys(agrupar);
+    return {
+      etiquetas,
+      datos: etiquetas.map(d => ({
+        proteina: Math.round(agrupar[d].proteina / (agrupar[d].dias || 1)),
+        calorias: Math.round(agrupar[d].calorias / (agrupar[d].dias || 1)),
+        caloriasQ: Math.round(agrupar[d].caloriasQ / (agrupar[d].dias || 1)),
+        peso: agrupar[d].peso || null,
+      }))
+    };
+  }, [historial, tipoGrafica, semanaResumen]); // ✅ Gráfica cambia al cambiar de semana
+
+  const etiquetas = datosGrafica.etiquetas;
+  const datosProteina = datosGrafica.datos.map(d => d.proteina);
+  const datosCalorias = datosGrafica.datos.map(d => d.calorias);
+  const datosQuemadas = datosGrafica.datos.map(d => d.caloriasQ);
+  const datosPeso = datosGrafica.datos.map(d => d.peso);
+
+  // ========== EL RESTO DE TUS FUNCIONES SIGUEN IGUAL ==========
   useEffect(() => {
     if (!metaSemanal || !resumenSemanal?.promedioPeso) return;
     const cambioPeso = Math.abs(resumenSemanal.promedioPeso - metaSemanal.pesoInicial);
     if (cambioPeso >= 1.5) {
       const nuevasMetas = calcularMetasCompletas(metaSemanal.objetivo, resumenSemanal.promedioPeso);
-      const actualizada: MetaSemanal = {
-        ...metaSemanal,
-        pesoInicial: resumenSemanal.promedioPeso,
-        ...nuevasMetas,
-      };
+      const actualizada: MetaSemanal = { ...metaSemanal, pesoInicial: resumenSemanal.promedioPeso, ...nuevasMetas };
       setMetaSemanal(actualizada);
       localStorage.setItem('metaSemanal', JSON.stringify(actualizada));
       setMensaje(`⚖️ Tu peso cambió ${cambioPeso.toFixed(1)}kg → metas recalculadas automáticamente`);
@@ -145,13 +263,12 @@ const App: React.FC = () => {
       const guardado = localStorage.getItem('historialComidas');
       if (guardado) setHistorial(JSON.parse(guardado));
     } catch (e) {}
-
     try {
       const metaGuardada = localStorage.getItem('metaSemanal');
       if (metaGuardada) {
         const m: MetaSemanal = JSON.parse(metaGuardada);
         setMetaSemanal(m);
-        if (m.semanaInicio !== lunesSemana) {
+        if (m.semanaInicio !== lunesSemanaActual) {
           setMostrarPedirMeta(true);
           setPesoTemp(m.pesoInicial);
         }
@@ -159,7 +276,6 @@ const App: React.FC = () => {
         setMostrarPedirMeta(true);
       }
     } catch (e) { setMostrarPedirMeta(true); }
-
     try {
       const saludGuardada = localStorage.getItem('datosSalud');
       if (saludGuardada) {
@@ -186,22 +302,18 @@ const App: React.FC = () => {
           });
         } else {
           setDatosSalud({
-            fecha: fechaSeleccionada,
-            pasos: 0,
-            caloriasQuemadas: 0,
-            horasSueno: 0,
-            pesoKg: 0,
-            masaMagraKg: 0,
-            frecuenciaCardiaca: 0,
+            fecha: fechaSeleccionada, pasos: 0, caloriasQuemadas: 0, horasSueno: 0,
+            pesoKg: 0, masaMagraKg: 0, frecuenciaCardiaca: 0,
           });
-        }      }
+        }
+      }
     } catch (e) {}
   }, [fechaSeleccionada]);
 
   const guardarMetaSemanal = () => {
     const metasCalc = calcularMetasCompletas(objetivoTemp, pesoTemp);
     const nuevaMeta: MetaSemanal = {
-      semanaInicio: lunesSemana,
+      semanaInicio: lunesSemanaActual,
       objetivo: objetivoTemp,
       pesoInicial: pesoTemp,
       ...metasCalc,
@@ -259,15 +371,11 @@ const App: React.FC = () => {
   };
 
   const actualizarCampo = (id: string, campo: 'nombre' | 'gramos', valor: string | number) => {
-    setListaAlimentos(prev => prev.map(a =>
-      a.id === id ? { ...a, [campo]: valor } : a
-    ));
+    setListaAlimentos(prev => prev.map(a => a.id === id ? { ...a, [campo]: valor } : a));
   };
 
   const actualizarNutriente = (id: string, nutriente: keyof Nutrientes, valor: number) => {
-    setListaAlimentos(prev => prev.map(a =>
-      a.id === id ? { ...a, nutrientes: { ...a.nutrientes, [nutriente]: valor } } : a
-    ));
+    setListaAlimentos(prev => prev.map(a => a.id === id ? { ...a, nutrientes: { ...a.nutrientes, [nutriente]: valor } } : a));
   };
 
   const quitarAlimento = (id: string) => {
@@ -280,12 +388,9 @@ const App: React.FC = () => {
       return;
     }
     const total = sumarNutrientes(listaAlimentos.map(a => a.nutrientes));
-
     if (comidaEnEdicion) {
       const actualizadas = historial.map(c =>
-        c.id === comidaEnEdicion.id
-          ? { ...c, tipo: tipoComida, alimentos: listaAlimentos, total }
-          : c
+        c.id === comidaEnEdicion.id ? { ...c, tipo: tipoComida, alimentos: listaAlimentos, total } : c
       );
       localStorage.setItem('historialComidas', JSON.stringify(actualizadas));
       setHistorial(actualizadas);
@@ -322,11 +427,9 @@ const App: React.FC = () => {
 
   const copiarComida = (c: Comida) => {
     const nueva: Comida = {
-      id: crypto.randomUUID(),
-      tipo: c.tipo,
+      id: crypto.randomUUID(), tipo: c.tipo,
       alimentos: c.alimentos.map(a => ({ ...a, id: crypto.randomUUID() })),
-      fecha: fechaSeleccionada,
-      total: c.total,
+      fecha: fechaSeleccionada, total: c.total,
     };
     const nuevoHistorial = [nueva, ...historial];
     localStorage.setItem('historialComidas', JSON.stringify(nuevoHistorial));
@@ -335,8 +438,7 @@ const App: React.FC = () => {
   };
 
   const copiarComidasDeAyer = () => {
-    const ayer = new Date();
-    ayer.setDate(ayer.getDate() - 1);
+    const ayer = new Date(); ayer.setDate(ayer.getDate() - 1);
     const fechaAyer = ayer.toISOString().split('T')[0];
     const comidasAyer = historial.filter(c => c.fecha === fechaAyer);
     if (comidasAyer.length === 0) {
@@ -344,9 +446,7 @@ const App: React.FC = () => {
       return;
     }
     const copias = comidasAyer.map(c => ({
-      ...c,
-      id: crypto.randomUUID(),
-      fecha: fechaSeleccionada,
+      ...c, id: crypto.randomUUID(), fecha: fechaSeleccionada,
       alimentos: c.alimentos.map(a => ({ ...a, id: crypto.randomUUID() })),
     }));
     const nuevoHistorial = [...copias, ...historial];
@@ -357,25 +457,11 @@ const App: React.FC = () => {
 
   const guardarDatosSalud = () => {
     try {
-      // Leer lo que ya está guardado
       const todosGuardados = JSON.parse(localStorage.getItem('datosSalud') || '{}');
-      
-      // Crear copia limpia sin la fecha duplicada
       const { fecha, ...datosSinFecha } = datosSalud;
-      
-      // Guardar solo los valores numéricos por fecha
       todosGuardados[fechaSeleccionada] = datosSinFecha;
-      
-      // Guardar en localStorage
       localStorage.setItem('datosSalud', JSON.stringify(todosGuardados));
-      
-      // Confirmar que se guardó recargando el valor
-      const confirmacion = JSON.parse(localStorage.getItem('datosSalud') || '{}');
-      if (confirmacion[fechaSeleccionada]) {
-        setMensaje(`✅ ¡Datos guardados! Pasos: ${datosSalud.pasos} | Calorías quemadas: ${datosSalud.caloriasQuemadas}`);
-      } else {
-        setMensaje('⚠️ Se intentó guardar, pero no se pudo confirmar');
-      }
+      setMensaje(`✅ ¡Datos guardados! Pasos: ${datosSalud.pasos} | Calorías quemadas: ${datosSalud.caloriasQuemadas}`);
     } catch (error) {
       setMensaje('❌ Error al guardar: ' + (error as Error).message);
     }
@@ -384,24 +470,19 @@ const App: React.FC = () => {
   const exportarTodo = () => {
     let csv = '=== COMIDAS ===\n';
     csv += 'Tipo,Fecha,Alimento,Gramos,Calorías,Proteína,Carbohidratos,Grasas,Fibra,Hierro,Calcio,Potasio,Magnesio,Vitamina C,Vitamina A\n';
-    
     historial.forEach(c => {
       const fecha = new Date(c.fecha + 'T00:00:00').toLocaleDateString('es-MX');
       c.alimentos.forEach(a => {
         csv += `${c.tipo},"${fecha}","${a.nombre}",${a.gramos},${a.nutrientes.calorias},${a.nutrientes.proteina},${a.nutrientes.carbohidratos},${a.nutrientes.grasas},${a.nutrientes.fibra},${a.nutrientes.hierro},${a.nutrientes.calcio},${a.nutrientes.potasio},${a.nutrientes.magnesio},${a.nutrientes.vitaminaC},${a.nutrientes.vitaminaA}\n`;
       });
     });
-
-    // 📋 Agregar datos de salud
     csv += '\n=== DATOS DE SALUD ===\n';
     csv += 'Fecha,Pasos,Calorías Quemadas,Horas Sueño,Peso (kg),Masa Magra (kg),Frecuencia Cardíaca\n';
-    
     const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
     Object.entries(todosSalud).forEach(([fecha, datos]: [string, any]) => {
       const fechaLegible = new Date(fecha + 'T00:00:00').toLocaleDateString('es-MX');
       csv += `"${fechaLegible}",${datos.pasos || 0},${datos.caloriasQuemadas || 0},${datos.horasSueno || 0},${datos.pesoKg || 0},${datos.masaMagraKg || 0},${datos.frecuenciaCardiaca || 0}\n`;
     });
-
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -420,33 +501,23 @@ const App: React.FC = () => {
       const texto = evento.target?.result as string;
       const lineas = texto.split('\n').filter(l => l.trim());
       const nuevas: Comida[] = [];
-
-      // ✅ Función mejorada para separar columnas (respeta comas dentro de comillas)
       const separarColumnas = (linea: string): string[] => {
         const resultado: string[] = [];
         let actual = '';
         let entreComillas = false;
         for (const c of linea) {
-          if (c === '"') {
-            entreComillas = !entreComillas;
-          } else if (c === ',' && !entreComillas) {
-            resultado.push(actual.trim());
-            actual = '';
-          } else {
-            actual += c;
-          }
+          if (c === '"') { entreComillas = !entreComillas; }
+          else if (c === ',' && !entreComillas) { resultado.push(actual.trim()); actual = ''; }
+          else { actual += c; }
         }
         resultado.push(actual.trim());
         return resultado;
       };
-
       for (let i = 1; i < lineas.length; i++) {
         const celdas = separarColumnas(lineas[i]);
         const lineaActual = lineas[i].trim();
-        // ✅ DETENERSE al llegar a la sección de salud
         if (lineaActual.startsWith('===')) break;
         if (!celdas || celdas.length < 7) continue;
-
         const tipo = (celdas[0] || 'comida').trim().toLowerCase() as TipoComida;
         const fechaTexto = (celdas[1] || hoy).trim();
         const nombre = (celdas[2] || '').trim().replace(/^"|"$/g, '');
@@ -462,10 +533,7 @@ const App: React.FC = () => {
         const magnesio = parseFloat((celdas[12] || '0').replace(/^"|"$/g, '')) || 0;
         const vitaminaC = parseFloat((celdas[13] || '0').replace(/^"|"$/g, '')) || 0;
         const vitaminaA = parseFloat((celdas[14] || '0').replace(/^"|"$/g, '')) || 0;
-
         if (!nombre || gramos <= 0) continue;
-
-        // ✅ Convertir fecha correctamente
         let fechaISO = hoy;
         if (fechaTexto.includes('/')) {
           const partes = fechaTexto.split('/');
@@ -474,70 +542,41 @@ const App: React.FC = () => {
             const año = anio.length === 2 ? `20${anio}` : anio;
             fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
           }
-        } else if (fechaTexto.includes('-')) {
-          fechaISO = fechaTexto;
-        }
-
+        } else if (fechaTexto.includes('-')) { fechaISO = fechaTexto; }
         const alimento: AlimentoDesglosado = {
-          id: crypto.randomUUID(),
-          textoOriginal: `${gramos}g de ${nombre}`,
+          id: crypto.randomUUID(), textoOriginal: `${gramos}g de ${nombre}`,
           nombre, gramos, confirmado: true,
           nutrientes: { proteina, grasas, carbohidratos, fibra, calorias, hierro, calcio, potasio, magnesio, vitaminaC, vitaminaA },
         };
-
         nuevas.push({
-          id: crypto.randomUUID(),
-          tipo: tipo as TipoComida,
-          alimentos: [alimento],
-          fecha: fechaISO,
+          id: crypto.randomUUID(), tipo: tipo as TipoComida,
+          alimentos: [alimento], fecha: fechaISO,
           total: sumarNutrientes([alimento.nutrientes]),
         });
       }
-
       if (nuevas.length === 0) {
         setMensaje('⚠️ No se encontraron datos válidos en el archivo. Verifica el formato.');
         return;
       }
-      // =====================================================
-      // ✅ LECTURA CORREGIDA DE DATOS DE SALUD
-      // =====================================================
       const saludNuevos: Record<string, any> = {};
       let leyendoSalud = false;
-
       for (let i = 0; i < lineas.length; i++) {
         const linea = lineas[i].trim();
-                
-        // Detectar cuando empieza la sección de salud
-        if (linea.startsWith('=== DATOS DE SALUD ===')) {
-          leyendoSalud = true;
-          continue;
-        }
-        // Saltar encabezado y todo lo que no sea salud
+        if (linea.startsWith('=== DATOS DE SALUD ===')) { leyendoSalud = true; continue; }
         if (!leyendoSalud || linea.startsWith('Fecha,Pasos')) continue;
         if (!linea) continue;
-
-        // ✅ Separar columnas RESPETANDO las celdas VACÍAS
         const celdasSalud: string[] = [];
         let actual = '';
         let entreComillas = false;
         for (const c of linea) {
-          if (c === '"') {
-            entreComillas = !entreComillas;
-          } else if (c === ',' && !entreComillas) {
-            celdasSalud.push(actual.trim().replace(/^"|"$/g, ''));
-            actual = '';
-          } else {
-            actual += c;
-          }
+          if (c === '"') { entreComillas = !entreComillas; }
+          else if (c === ',' && !entreComillas) { celdasSalud.push(actual.trim().replace(/^"|"$/g, '')); actual = ''; }
+          else { actual += c; }
         }
         celdasSalud.push(actual.trim().replace(/^"|"$/g, ''));
-
-        // ✅ Validar que tengamos al menos la fecha
         if (celdasSalud.length < 1) continue;
         const fechaTexto = celdasSalud[0];
         if (!fechaTexto || fechaTexto.length < 8) continue;
-
-        // ✅ Convertir fecha dd/mm/aaaa → aaaa-mm-dd
         let fechaISO = fechaTexto;
         if (fechaTexto.includes('/')) {
           const partes = fechaTexto.split('/');
@@ -549,32 +588,20 @@ const App: React.FC = () => {
             fechaISO = `${anio}-${mes}-${dia}`;
           }
         }
-
-        // ✅ Leer valor de CADA columna POR SU POSICIÓN, vacío = 0
         const pasos = celdasSalud[1] ? parseFloat(celdasSalud[1].replace(',', '.')) || 0 : 0;
         const caloriasQuemadas = celdasSalud[2] ? parseFloat(celdasSalud[2].replace(',', '.')) || 0 : 0;
         const horasSueno = celdasSalud[3] ? parseFloat(celdasSalud[3].replace(',', '.')) || 0 : 0;
         const pesoKg = celdasSalud[4] ? parseFloat(celdasSalud[4].replace(',', '.')) || 0 : 0;
         const masaMagraKg = celdasSalud[5] ? parseFloat(celdasSalud[5].replace(',', '.')) || 0 : 0;
         const frecuenciaCardiaca = celdasSalud[6] ? parseFloat(celdasSalud[6].replace(',', '.')) || 0 : 0;
-
         saludNuevos[fechaISO] = { pasos, caloriasQuemadas, horasSueno, pesoKg, masaMagraKg, frecuenciaCardiaca };
       }
-
-      // ✅ Fusionar y guardar
       const saludGuardada = JSON.parse(localStorage.getItem('datosSalud') || '{}');
       const saludFinal = { ...saludGuardada, ...saludNuevos };
       localStorage.setItem('datosSalud', JSON.stringify(saludFinal));
-      // =====================================================
-      // ✅ FIN corregido
-      // =====================================================
-
-      // ✅ Ya NO elimina alimentos del mismo día y mismo tipo
-      const sinDuplicados = [...nuevas, ...historial];
-
-      const historialFinal = sinDuplicados;
+      const historialFinal = [...nuevas, ...historial];
       localStorage.setItem('historialComidas', JSON.stringify(historialFinal));
-      setHistorial(sinDuplicados);
+      setHistorial(historialFinal);
       setMensaje(`✅ ¡Importadas ${nuevas.length} comidas y ${Object.keys(saludNuevos).length} días de salud!`);
     };
     lector.readAsText(new Blob([archivo], { type: 'text/csv;charset=utf-8;' }));
@@ -594,58 +621,10 @@ const App: React.FC = () => {
   const comidasDelDia = historial.filter(c => c.fecha === fechaSeleccionada);
   const totalDelDia = sumarNutrientes(comidasDelDia.map(c => c.total));
 
-  const datosGrafica = useMemo(() => {
-    const agrupar: Record<string, { peso: number; proteina: number; calorias: number; caloriasQ: number; dias: number }> = {};
-    const todosSalud = JSON.parse(localStorage.getItem('datosSalud') || '{}');
-
-    historial.forEach(c => {
-      const f = new Date(c.fecha + 'T00:00:00');
-      let clave = '';
-      if (tipoGrafica === 'semanal') clave = DIAS_SEMANA[f.getDay()];
-      else if (tipoGrafica === 'mensual') clave = `${f.getDate()}`;
-      else clave = f.toLocaleDateString('es-MX', { month: 'short' });
-
-      if (!agrupar[clave]) agrupar[clave] = { peso: 0, proteina: 0, calorias: 0, caloriasQ: 0, dias: 0 };
-      agrupar[clave].calorias += c.total.calorias;
-      agrupar[clave].proteina += c.total.proteina;
-      agrupar[clave].dias += 1;
-    });
-
-    Object.entries(todosSalud).forEach(([fecha, datos]: [string, any]) => {
-      const f = new Date(fecha + 'T00:00:00');
-      let clave = '';
-      if (tipoGrafica === 'semanal') clave = DIAS_SEMANA[f.getDay()];
-      else if (tipoGrafica === 'mensual') clave = `${f.getDate()}`;
-      else clave = f.toLocaleDateString('es-MX', { month: 'short' });
-
-      if (!agrupar[clave]) agrupar[clave] = { peso: 0, proteina: 0, calorias: 0, caloriasQ: 0, dias: 1 };
-      if (datos.pesoKg) agrupar[clave].peso = datos.pesoKg;
-      if (datos.caloriasQuemadas) agrupar[clave].caloriasQ = datos.caloriasQuemadas;
-    });
-
-    return agrupar;
-  }, [historial, tipoGrafica]);
-
-  const etiquetas = Object.keys(datosGrafica);
-  const datosPeso = etiquetas.map(d => datosGrafica[d].peso || null);
-  const datosProteina = etiquetas.map(d => Math.round(datosGrafica[d].proteina / (datosGrafica[d].dias || 1)));
-  const datosCalorias = etiquetas.map(d => Math.round(datosGrafica[d].calorias / (datosGrafica[d].dias || 1)));
-  const datosQuemadas = etiquetas.map(d => Math.round(datosGrafica[d].caloriasQ / (datosGrafica[d].dias || 1)));
-
-  const recomendacionSalud = () => {
-    if (!metaSemanal) return { texto: 'Configura tu meta semanal', color: '#e5e7eb' };
-    const saldo = totalDelDia.calorias - datosSalud.caloriasQuemadas;
-    if (metaSemanal.objetivo === 'bajar_peso' && saldo < -300) return { texto: '✅ Vas por buen camino para bajar de peso', color: '#dbeafe' };
-    if (metaSemanal.objetivo === 'ganar_musculo' && totalDelDia.proteina >= metaSemanal.proteinaObjetivo) return { texto: '✅ ¡Excelente! Cumpliste tu meta de proteína', color: '#d1fae5' };
-    if (metaSemanal.objetivo === 'subir_peso' && saldo > 300) return { texto: '✅ Estás consumiendo suficiente para subir de peso', color: '#fef3c7' };
-    return { texto: '💡 Ajusta porciones o actividad para alcanzar tu meta', color: '#fef9c3' };
-  };
-
   const comidasAyer = historial.filter(c => {
     const ay = new Date(); ay.setDate(ay.getDate() - 1);
     return c.fecha === ay.toISOString().split('T')[0];
   });
-
   return (
     <div style={{ maxWidth: '780px', margin: '0 auto', padding: '16px', fontFamily: 'system-ui, -apple-system, sans-serif', background: '#fafafa', minHeight: '100vh' }}>
       <h1 style={{ textAlign: 'center', color: '#065f46', marginBottom: '16px', fontSize: '22px' }}>💚 Salud con Huawei</h1>
@@ -696,7 +675,7 @@ const App: React.FC = () => {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', zIndex: 1000 }}>
           <div style={{ background: 'white', padding: '24px', borderRadius: '12px', maxWidth: '420px', width: '100%' }}>
             <h2 style={{ marginTop: 0, color: '#065f46' }}>🎯 Meta para esta semana</h2>
-            <p style={{ color: '#6b7280', marginBottom: '18px' }}>Semana del {new Date(lunesSemana).toLocaleDateString('es-MX')}</p>
+            <p style={{ color: '#6b7280', marginBottom: '18px' }}>Semana del {new Date(lunesSemanaActual).toLocaleDateString('es-MX')}</p>
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>¿Qué quieres lograr?</label>
             {[
               { v: 'bajar_peso', t: '🔽 Bajar de peso' },
@@ -741,6 +720,9 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* ============================================== */}
+      {/* 🍽️ PESTANA: COMIDAS */}
+      {/* ============================================== */}
       {pestana === 'comidas' && (
         <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
           <h3 style={{ marginTop: 0 }}>¿Qué vas a registrar?</h3>
@@ -810,7 +792,6 @@ const App: React.FC = () => {
                     </div>
                     <button onClick={() => quitarAlimento(alimento.id)} style={{ margin: '0 0 0 8px', padding: '4px 8px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '4px', cursor: 'pointer' }}>❌</button>
                   </div>
-
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '6px', marginTop: '8px' }}>
                     {([
                       { label: '🔥 Cal', key: 'calorias', unit: 'kcal', step: '1' },
@@ -871,11 +852,13 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* ============================================== */}
+      {/* 📋 PESTANA: SALUD */}
+      {/* ============================================== */}
       {pestana === 'salud' && (
         <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
           <h2 style={{ marginTop: 0 }}>📋 Datos del reloj y cuerpo</h2>
           <p style={{ color: '#6b7280', fontSize: '14px', margin: '4px 0 16px 0' }}>Fecha: {fechaSeleccionada}</p>
-
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', margin: '15px 0' }}>
             {[
               { label: '👣 Pasos', key: 'pasos', type: 'number' },
@@ -896,21 +879,16 @@ const App: React.FC = () => {
               </div>
             ))}
           </div>
-
           <button onClick={guardarDatosSalud} style={{ padding: '10px 20px', fontSize: '15px', width: '100%', borderRadius: '6px', border: 'none', cursor: 'pointer', background: '#059669', color: 'white', fontWeight: 600, marginTop: '8px' }}>
             💾 Guardar datos de salud
           </button>
-
-          {comidasDelDia.length > 0 && (
-            <div style={{ marginTop: '20px', padding: '14px', borderRadius: '8px', background: recomendacionSalud().color }}>
-              <h3 style={{ margin: '0 0 8px 0', fontSize: '15px' }}>💡 Recomendación del día</h3>
-              <p style={{ margin: 0, fontSize: '14px' }}>{recomendacionSalud().texto}</p>
-              <Consejos nutrientes={totalDelDia} meta={metaSemanal} />
-            </div>
-          )}
+          {/* ✅ LAS RECOMENDACIONES YA NO VAN AQUÍ → SE MOSTRARÁN EN CALENDARIO */}
         </div>
       )}
 
+      {/* ============================================== */}
+      {/* 📅 PESTANA: CALENDARIO — AHORA CON RECOMENDACIONES DEL DÍA ✅ */}
+      {/* ============================================== */}
       {pestana === 'calendario' && (
         <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -933,7 +911,7 @@ const App: React.FC = () => {
                   style={{
                     fontWeight: seleccionada ? 'bold' : 'normal',
                     border: esHoy ? '2px solid #059669' : seleccionada ? '2px solid #3b82f6' : '2px solid transparent',
-                    background: tiene 
+                    background: tiene
                       ? (seleccionada ? '#dbeafe' : '#d1fae5')
                       : (seleccionada ? '#e5e7eb' : 'transparent'),
                     borderRadius: '6px',
@@ -948,26 +926,53 @@ const App: React.FC = () => {
               );
             })}
           </div>
+
+          {/* ✅ RECOMENDACIÓN DEL DÍA SELECCIONADO — AHORA EN CALENDARIO */}
+          <div style={{ marginTop: '18px', padding: '14px', borderRadius: '8px', background: obtenerRecomendacionDia(fechaSeleccionada).color }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '15px' }}>💡 Recomendación para el {new Date(fechaSeleccionada + 'T00:00:00').toLocaleDateString('es-MX')}</h3>
+            <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5' }}>{obtenerRecomendacionDia(fechaSeleccionada).texto}</p>
+            {comidasDelDia.length > 0 && (
+              <div style={{ marginTop: '10px' }}>
+                <strong>🍽️ Resumen del día:</strong>
+                <DesgloseNutrientes nutrientes={totalDelDia} />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
+      {/* ============================================== */}
+      {/* 📊 PESTANA: RESUMEN — CORREGIDO ✅ */}
+      {/* ============================================== */}
       {pestana === 'resumen' && resumenSemanal && (
         <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
-          <h2 style={{ marginTop: 0 }}>📊 Resumen Semanal</h2>
+          <h2 style={{ marginTop: 0 }}>📊 Resumen</h2>
 
+          {/* ✅ FLECHAS DE SEMANA ARREGLADAS — ahora sí avanzan y retroceden */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', margin: '12px 0' }}>
             <button
-              onClick={() => { const d = new Date(semanaResumen); d.setDate(d.getDate() - 7); setSemanaResumen(obtenerLunes(d)); }}
+              onClick={() => {
+                const d = new Date(semanaResumen);
+                d.setDate(d.getDate() - 7);
+                setSemanaResumen(obtenerLunes(d));
+              }}
               style={{ padding: '6px 12px', border: 'none', background: '#e5e7eb', borderRadius: '6px', cursor: 'pointer', fontSize: '16px' }}
             >◀</button>
             <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#065f46', minWidth: '200px', textAlign: 'center' }}>
-              Semana del {new Date(resumenSemanal.semanaInicio).toLocaleDateString('es-MX')}
+              {tipoGrafica === 'semanal'
+                ? `Semana del ${new Date(resumenSemanal.semanaInicio).toLocaleDateString('es-MX')}`
+                : tipoGrafica === 'mensual' ? 'Vista mensual' : 'Vista anual'}
             </span>
             <button
-              onClick={() => { const d = new Date(semanaResumen); d.setDate(d.getDate() + 7); setSemanaResumen(obtenerLunes(d)); }}
+              onClick={() => {
+                const d = new Date(semanaResumen);
+                d.setDate(d.getDate() + 7);
+                setSemanaResumen(obtenerLunes(d));
+              }}
               style={{ padding: '6px 12px', border: 'none', background: '#e5e7eb', borderRadius: '6px', cursor: 'pointer', fontSize: '16px' }}
             >▶</button>
           </div>
+
           <div style={{ textAlign: 'center', marginBottom: '8px' }}>
             <button
               onClick={() => setSemanaResumen(obtenerLunes())}
@@ -975,6 +980,7 @@ const App: React.FC = () => {
             >📍 Semana actual</button>
           </div>
 
+          {/* Tarjetas de resumen */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', margin: '16px 0' }}>
             {[
               { etiq: '🔥 Calorías/día', valor: `${resumenSemanal.promedioCalorias} kcal` },
@@ -991,6 +997,7 @@ const App: React.FC = () => {
             ))}
           </div>
 
+          {/* Selector de tipo de gráfica */}
           <div style={{ display: 'flex', gap: '8px', margin: '14px 0' }}>
             {(['semanal', 'mensual', 'anual'] as TipoGrafica[]).map(t => (
               <button
@@ -1007,6 +1014,7 @@ const App: React.FC = () => {
             ))}
           </div>
 
+          {/* ✅ GRÁFICA — ya ordenada y vinculada a la semana seleccionada */}
           <div style={{ margin: '18px 0', height: 260 }}>
             <Line
               data={{
@@ -1021,7 +1029,7 @@ const App: React.FC = () => {
             />
           </div>
 
-          {resumenSemanal.promedioPeso > 0 && (
+          {datosPeso.some(v => v !== null) && (
             <div style={{ margin: '18px 0', height: 220 }}>
               <Bar
                 data={{
@@ -1033,8 +1041,11 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {/* ✅ RECOMENDACIONES — cambian según la semana seleccionada */}
           <div style={{ marginTop: '20px', padding: '14px', background: '#f0fdf4', borderRadius: '8px' }}>
-            <h4 style={{ margin: '0 0 10px 0' }}>💡 Recomendaciones de la semana</h4>
+            <h4 style={{ margin: '0 0 10px 0' }}>
+              💡 Recomendaciones {tipoGrafica === 'semanal' ? 'de la semana' : tipoGrafica === 'mensual' ? 'mensuales' : 'anuales'}
+            </h4>
             <ul style={{ margin: 0, paddingLeft: '20px' }}>
               {resumenSemanal.recomendacionesFinales.map((r, i) => (
                 <li key={i} style={{ margin: '4px 0', fontSize: '14px' }}>{r}</li>
@@ -1048,6 +1059,9 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* ============================================== */}
+      {/* 📋 PESTANA: HISTORIAL */}
+      {/* ============================================== */}
       {pestana === 'historial' && (
         <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
@@ -1059,7 +1073,6 @@ const App: React.FC = () => {
             </button>
             <input ref={inputImportar} type="file" accept=".csv" onChange={importarDatos} style={{ display: 'none' }} />
           </div>
-
           <h3 style={{ margin: '0 0 12px 0' }}>📋 Historial de comidas</h3>
           {historial.length === 0 ? (
             <p style={{ color: '#6b7280' }}>Aún no has guardado ninguna comida.</p>
@@ -1083,7 +1096,6 @@ const App: React.FC = () => {
           )}
         </div>
       )}
-
     </div>
   );
 };
