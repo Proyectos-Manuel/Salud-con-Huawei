@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import EntradaVoz from './components/EntradaVoz';
 import DesgloseNutrientes from './components/DesgloseNutrientes';
-import Consejos from './components/Consejos';
+//import Consejos from './components/Consejos';
 import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, calcularMetasCompletas } from './services/nutricionAPI';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler } from 'chart.js';
 import { Line, Bar } from 'react-chartjs-2';
