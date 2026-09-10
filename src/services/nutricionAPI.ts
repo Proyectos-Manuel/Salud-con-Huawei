@@ -3,7 +3,7 @@ const BASE_URL = 'https://api.nal.usda.gov/fdc/v1';
 
 console.log('🔑 Clave API:', USDA_API_KEY ? '✅ Configurada' : '⚠️ Falta clave API');
 
-import type { Nutrientes } from '../types';
+import type { Nutrientes, ObjetivoSemanal } from '../types';
 
 // IDs de nutrientes en la API USDA
 const NUTRIENT_IDS: Record<number, keyof Nutrientes> = {

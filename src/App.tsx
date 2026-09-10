@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import EntradaVoz from './components/EntradaVoz';
 import DesgloseNutrientes from './components/DesgloseNutrientes';
 import Consejos from './components/Consejos';
-import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, generarConsejos, calcularMetasCompletas } from './services/nutricionAPI';
+import { desglosarAlimentos, obtenerNutrientes, sumarNutrientes, calcularMetasCompletas } from './services/nutricionAPI';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler } from 'chart.js';
 import { Line, Bar } from 'react-chartjs-2';
-import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetaSemanal, ObjetivoSemanal, ResumenSemanal } from './types';
+import type { AlimentoDesglosado, Comida, DatosSaludDiarios, MetaSemanal, Nutrientes, ObjetivoSemanal, ResumenSemanal } from './types';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler);
 
@@ -53,12 +53,13 @@ const App: React.FC = () => {
   const [mostrarPedirMeta, setMostrarPedirMeta] = useState(false);
   const [objetivoTemp, setObjetivoTemp] = useState<ObjetivoSemanal>('mantener');
   const [pesoTemp, setPesoTemp] = useState(0);
- 
+  const [semanaResumen, setSemanaResumen] = useState(lunesSemana);
+
   const resumenSemanal = useMemo((): ResumenSemanal | null => {
     if (!metaSemanal) return null;
     const diasSemana: string[] = [];
     for (let i = 0; i < 7; i++) {
-      const f = new Date(lunesSemana);
+      const f = new Date(semanaResumen);
       f.setDate(f.getDate() + i);
       diasSemana.push(f.toISOString().split('T')[0]);
     }
@@ -107,7 +108,7 @@ const App: React.FC = () => {
     else recomendacionesFinales.push('🚶 Intenta caminar un poco más cada día');
 
     return {
-      semanaInicio: lunesSemana,
+      semanaInicio: semanaResumen,
       diasRegistrados,
       promedioCalorias: promCal,
       promedioProteina: promPro,
@@ -121,7 +122,7 @@ const App: React.FC = () => {
       cumplimientoCalorias: cumCal,
       recomendacionesFinales,
     };
-  }, [historial, metaSemanal, lunesSemana]);
+  }, [historial, metaSemanal, semanaResumen]);
 
   useEffect(() => {
     if (!metaSemanal || !resumenSemanal?.promedioPeso) return;
@@ -250,11 +251,23 @@ const App: React.FC = () => {
   };
 
   const cambiarGramos = async (id: string, nuevosGramos: number) => {
-    if (nuevosGramos < 10) return;
+    if (nuevosGramos < 1) return;
     const alimento = listaAlimentos.find(a => a.id === id);
     if (!alimento) return;
     const nutrientes = await obtenerNutrientes(alimento.nombre, nuevosGramos);
     setListaAlimentos(prev => prev.map(a => a.id === id ? { ...a, gramos: nuevosGramos, nutrientes } : a));
+  };
+
+  const actualizarCampo = (id: string, campo: 'nombre' | 'gramos', valor: string | number) => {
+    setListaAlimentos(prev => prev.map(a =>
+      a.id === id ? { ...a, [campo]: valor } : a
+    ));
+  };
+
+  const actualizarNutriente = (id: string, nutriente: keyof Nutrientes, valor: number) => {
+    setListaAlimentos(prev => prev.map(a =>
+      a.id === id ? { ...a, nutrientes: { ...a.nutrientes, [nutriente]: valor } } : a
+    ));
   };
 
   const quitarAlimento = (id: string) => {
@@ -628,7 +641,6 @@ const App: React.FC = () => {
     return { texto: '💡 Ajusta porciones o actividad para alcanzar tu meta', color: '#fef9c3' };
   };
 
-  const consejos = generarConsejos(totalDelDia);
   const comidasAyer = historial.filter(c => {
     const ay = new Date(); ay.setDate(ay.getDate() - 1);
     return c.fecha === ay.toISOString().split('T')[0];
@@ -778,14 +790,54 @@ const App: React.FC = () => {
               <h4 style={{ margin: '0 0 10px 0' }}>🍽️ Alimentos:</h4>
               {listaAlimentos.map((alimento, idx) => (
                 <div key={alimento.id} style={{ padding: '12px', margin: '8px 0', background: '#f9fafb', borderRadius: '6px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <strong>{idx + 1}. {alimento.gramos}g de {alimento.nombre}</strong>
-                    <div>
-                      <button onClick={() => { const n = prompt('Nueva cantidad en gramos:', alimento.gramos.toString()); if (n && parseInt(n) >= 10) cambiarGramos(alimento.id, parseInt(n)); }} style={{ margin: '0 4px', padding: '3px 6px', border: 'none', background: '#e5e7eb', borderRadius: '4px', cursor: 'pointer' }}>✏️</button>
-                      <button onClick={() => quitarAlimento(alimento.id)} style={{ margin: '0 4px', padding: '3px 6px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '4px', cursor: 'pointer' }}>❌</button>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                      <span style={{ fontWeight: 'bold', minWidth: '20px' }}>{idx + 1}.</span>
+                      <input
+                        type="number"
+                        value={alimento.gramos}
+                        onChange={(e) => actualizarCampo(alimento.id, 'gramos', parseFloat(e.target.value) || 0)}
+                        onBlur={(e) => { const v = parseFloat(e.target.value) || 0; if (v >= 1) cambiarGramos(alimento.id, v); }}
+                        style={{ width: '70px', padding: '4px 6px', fontSize: '14px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                      />
+                      <span>g de</span>
+                      <input
+                        type="text"
+                        value={alimento.nombre}
+                        onChange={(e) => actualizarCampo(alimento.id, 'nombre', e.target.value)}
+                        style={{ flex: 1, padding: '4px 6px', fontSize: '14px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                      />
                     </div>
+                    <button onClick={() => quitarAlimento(alimento.id)} style={{ margin: '0 0 0 8px', padding: '4px 8px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '4px', cursor: 'pointer' }}>❌</button>
                   </div>
-                  <DesgloseNutrientes nutrientes={alimento.nutrientes} />
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '6px', marginTop: '8px' }}>
+                    {([
+                      { label: '🔥 Cal', key: 'calorias', unit: 'kcal', step: '1' },
+                      { label: '🥩 Prot', key: 'proteina', unit: 'g', step: '0.1' },
+                      { label: '🍞 Carb', key: 'carbohidratos', unit: 'g', step: '0.1' },
+                      { label: '🥑 Gras', key: 'grasas', unit: 'g', step: '0.1' },
+                      { label: '🌾 Fibra', key: 'fibra', unit: 'g', step: '0.1' },
+                      { label: '🩸 Hierro', key: 'hierro', unit: 'mg', step: '0.01' },
+                      { label: '🦴 Calcio', key: 'calcio', unit: 'mg', step: '0.1' },
+                      { label: '⚡ Potasio', key: 'potasio', unit: 'mg', step: '0.1' },
+                      { label: '💪 Magnesio', key: 'magnesio', unit: 'mg', step: '0.01' },
+                      { label: '🍊 Vit C', key: 'vitaminaC', unit: 'mg', step: '0.1' },
+                      { label: '👁️ Vit A', key: 'vitaminaA', unit: 'µg', step: '0.1' },
+                    ] as { label: string; key: keyof Nutrientes; unit: string; step: string }[]).map(n => (
+                      <div key={n.key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <label style={{ fontSize: '12px', color: '#6b7280', whiteSpace: 'nowrap' }}>{n.label}</label>
+                        <input
+                          type="number"
+                          step={n.step}
+                          value={alimento.nutrientes[n.key]}
+                          onChange={(e) => actualizarNutriente(alimento.id, n.key, parseFloat(e.target.value) || 0)}
+                          style={{ width: '60px', padding: '3px 4px', fontSize: '13px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                        />
+                        <span style={{ fontSize: '11px', color: '#9ca3af' }}>{n.unit}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
               <div style={{ marginTop: '14px', padding: '12px', background: '#ecfdf5', borderRadius: '6px', border: '2px solid #10b981' }}>
@@ -902,7 +954,26 @@ const App: React.FC = () => {
       {pestana === 'resumen' && resumenSemanal && (
         <div style={{ background: 'white', padding: '16px', borderRadius: '10px' }}>
           <h2 style={{ marginTop: 0 }}>📊 Resumen Semanal</h2>
-          <p style={{ color: '#6b7280', fontSize: '14px' }}>Semana del {new Date(resumenSemanal.semanaInicio).toLocaleDateString('es-MX')}</p>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', margin: '12px 0' }}>
+            <button
+              onClick={() => { const d = new Date(semanaResumen); d.setDate(d.getDate() - 7); setSemanaResumen(obtenerLunes(d)); }}
+              style={{ padding: '6px 12px', border: 'none', background: '#e5e7eb', borderRadius: '6px', cursor: 'pointer', fontSize: '16px' }}
+            >◀</button>
+            <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#065f46', minWidth: '200px', textAlign: 'center' }}>
+              Semana del {new Date(resumenSemanal.semanaInicio).toLocaleDateString('es-MX')}
+            </span>
+            <button
+              onClick={() => { const d = new Date(semanaResumen); d.setDate(d.getDate() + 7); setSemanaResumen(obtenerLunes(d)); }}
+              style={{ padding: '6px 12px', border: 'none', background: '#e5e7eb', borderRadius: '6px', cursor: 'pointer', fontSize: '16px' }}
+            >▶</button>
+          </div>
+          <div style={{ textAlign: 'center', marginBottom: '8px' }}>
+            <button
+              onClick={() => setSemanaResumen(obtenerLunes())}
+              style={{ padding: '4px 10px', fontSize: '13px', border: '1px solid #d1d5db', background: '#f9fafb', borderRadius: '6px', cursor: 'pointer', color: '#374151' }}
+            >📍 Semana actual</button>
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', margin: '16px 0' }}>
             {[
